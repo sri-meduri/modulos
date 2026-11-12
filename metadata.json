@@ -1,5 +1,0 @@
-{
-  "name": "Modulos",
-  "description": "A financial dashboard to help users manage their income, expenses, and debts. It provides tools to check loan affordability and create a debt payoff plan using the avalanche method.",
-  "requestFramePermissions": []
-}

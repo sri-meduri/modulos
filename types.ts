@@ -138,14 +138,3 @@ export interface Settings {
     /** Candidate payments the user said are NOT debt payments. */
     ignoredCandidates?: string[];
 }
-
-export type FilingStatus = 'single' | 'married';
-
-export interface PayoffStep {
-    month: number;
-    year: number;
-    totalPayment: number;
-    totalInterestPaid: number;
-    remainingBalance: number;
-    payments: { loanId: string, payment: number, interest: number, principal: number, balance: number, minPayment?: number, extraPayment?: number }[];
-}

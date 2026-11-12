@@ -9,6 +9,7 @@ import { getEffectiveMinPayment } from '../services/loanCalculator';
 import { STANDARD_EXPENSES } from '../constants';
 import { createSampleFinances, createSampleSettings } from '../services/sampleData';
 import ImportGuestDataModal from '../components/ImportGuestDataModal';
+import { storage } from '../lib/storage';
 
 interface FinanceContextType {
     finances: Finances;
@@ -40,7 +41,7 @@ interface FinanceContextType {
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 
 export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const { user, isGuest, isSample } = useAuth();
+    const { user, isGuest, isSample, resetData } = useAuth();
 
     const initialFinances = useMemo<Finances>(() => {
         if (isSample) return createSampleFinances();
@@ -69,7 +70,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [settings, setSettings, settingsLoading, deleteRemoteSettings] = useAmplifyStorage<Settings>('settings', initialSettings, 'Settings', ['customOrder', 'payeeRules', 'ignoredCandidates']);
 
     // Guest data is never silently discarded on sign-in: if guest_finances/guest_settings
-    // exist in localStorage once a real user is signed in, always ask before either
+    // exist in storage once a real user is signed in, always ask before either
     // merging them into the account or clearing them.
     const [importPrompt, setImportPrompt] = useState<{ guestFinances: Finances | null; guestSettings: Settings | null } | null>(null);
     const reconciledUserRef = useRef<string | null>(null);
@@ -79,8 +80,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (reconciledUserRef.current === user.userId) return;
         reconciledUserRef.current = user.userId;
 
-        const guestFinancesRaw = localStorage.getItem('guest_finances');
-        const guestSettingsRaw = localStorage.getItem('guest_settings');
+        const guestFinancesRaw = storage.getItem('guest_finances');
+        const guestSettingsRaw = storage.getItem('guest_settings');
         if (!guestFinancesRaw && !guestSettingsRaw) return;
 
         setImportPrompt({
@@ -94,8 +95,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (importPrompt.guestFinances) setFinances(importPrompt.guestFinances);
             if (importPrompt.guestSettings) setSettings(importPrompt.guestSettings);
         }
-        localStorage.removeItem('guest_finances');
-        localStorage.removeItem('guest_settings');
+        storage.removeItem('guest_finances');
+        storage.removeItem('guest_settings');
         setImportPrompt(null);
     };
 
@@ -144,7 +145,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (!isGuest) {
             await Promise.all([deleteRemoteFinances(), deleteRemoteSettings()]);
         }
-        localStorage.clear();
+        storage.clearAppData();
+        resetData();
     };
 
     // Migrate old "Housing (Rent/Mortgage)" and "Rent / Mortgage" to "Rent"
@@ -235,34 +237,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }, [finances]);
 
     const loading = financesLoading || settingsLoading;
-
-    // Record a rolling 12-month history of net income vs. expenses. The current
-    // calendar month's entry is upserted whenever the underlying totals change,
-    // so the breakdown chart fills in with real data over time.
-    useEffect(() => {
-        if (loading) return;
-        const income = finances.monthlyNetIncome;
-        const expenses = monthlyExpensesTotal;
-        // Don't record an empty (pristine) month.
-        if (income === 0 && expenses === 0) return;
-
-        const monthKey = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
-
-        setFinances(prev => {
-            const history = prev.incomeExpenseHistory ?? [];
-            const existing = history.find(h => h.month === monthKey);
-            if (existing && existing.income === income && existing.expenses === expenses) {
-                return prev; // No change — bail out to avoid a re-render loop.
-            }
-            const updated = [
-                ...history.filter(h => h.month !== monthKey),
-                { month: monthKey, income, expenses },
-            ]
-                .sort((a, b) => a.month.localeCompare(b.month))
-                .slice(-12);
-            return { ...prev, incomeExpenseHistory: updated };
-        });
-    }, [finances.monthlyNetIncome, monthlyExpensesTotal, loading, setFinances]);
 
     // Record total active debt per month so the Overview/Progress charts show
     // real history (the current month is upserted as balances change).

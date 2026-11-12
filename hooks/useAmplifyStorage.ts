@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { client } from '../lib/amplify';
+import { storage } from '../lib/storage';
+import { saveErrors } from '../lib/events';
 
 type ModelName = 'Finances' | 'Settings';
 
@@ -25,11 +27,7 @@ const reportGqlErrors = (op: string, model: string, errors: GqlErrors): boolean 
   if (!errors?.length) return false;
   const message = errors.map((e) => e.message).join('; ');
   console.error(`${op} ${model} failed:`, message);
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(
-      new CustomEvent('modulos:save-error', { detail: `${model} ${op} failed: ${message}` })
-    );
-  }
+  saveErrors.emit(`${model} ${op} failed: ${message}`);
   return true;
 };
 
@@ -99,9 +97,7 @@ function useAmplifyStorage<T extends object>(
 
   const readLocalStorage = useCallback((userId?: string | null, guest?: boolean): T | null => {
     try {
-      const storageKey = getStorageKey(userId, guest);
-      const item = window.localStorage.getItem(storageKey);
-      return item ? JSON.parse(item) : null;
+      return storage.getJson<T>(getStorageKey(userId, guest));
     } catch {
       return null;
     }
@@ -121,7 +117,7 @@ function useAmplifyStorage<T extends object>(
         recordIdRef.current = record.id as string;
         const value = decodeJsonFields(stripMeta(record), jsonFields) as unknown as T;
         setStoredValue(value);
-        window.localStorage.setItem(getStorageKey(userId, false), JSON.stringify(value));
+        storage.setJson(getStorageKey(userId, false), value);
       } else {
         recordIdRef.current = null;
       }
@@ -155,8 +151,7 @@ function useAmplifyStorage<T extends object>(
   }, [user?.userId, isGuest]);
 
   const saveToDatabase = useCallback(async (value: T) => {
-    const storageKey = getStorageKey();
-    window.localStorage.setItem(storageKey, JSON.stringify(value));
+    storage.setJson(getStorageKey(), value);
 
     if (!user || isGuest) return;
 

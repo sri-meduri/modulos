@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Loan, LoanType, DebtStatus } from '../types';
 import { LOAN_PRESETS } from '../constants';
 import { calculateMinimumPayment } from '../services/loanCalculator';
-import { Button, Chip, Field, Sheet, money } from './ui';
+import { confirmAction } from '../lib/dialog';
+import { money, toNumber } from '../lib/format';
+import { Button, Chip, Field, Inline, Sheet, Stack, Text, TextButton } from './ui';
 
 const TYPES: { type: LoanType; label: string }[] = [
     { type: LoanType.CreditCard, label: 'Credit card' },
@@ -12,10 +14,7 @@ const TYPES: { type: LoanType; label: string }[] = [
     { type: LoanType.Other, label: 'Other' },
 ];
 
-interface Draft {
-    name: string; type: LoanType; balance: string; apr: string; minPayment: string; termYears: string;
-    dueDay: string; propertyTax: string;
-}
+interface Draft { name: string; type: LoanType; balance: string; apr: string; minPayment: string; termYears: string; dueDay: string; propertyTax: string }
 
 const toDraft = (loan?: Loan, type: LoanType = LoanType.CreditCard): Draft => {
     if (loan) {
@@ -39,7 +38,7 @@ interface Props {
     onDelete?: (id: string) => void;
 }
 
-/** Add / edit a debt. Type chips prefill typical APR and term. */
+/** Add / edit a debt. Type chips prefill a typical APR and term. */
 const DebtSheet: React.FC<Props> = ({ open, onClose, loan, onSave, onDelete }) => {
     const [d, setD] = useState<Draft>(() => toDraft(loan));
     const [more, setMore] = useState(false);
@@ -49,87 +48,70 @@ const DebtSheet: React.FC<Props> = ({ open, onClose, loan, onSave, onDelete }) =
     const set = (k: keyof Draft) => (v: string) => setD(prev => ({ ...prev, [k]: v }));
     const pickType = (type: LoanType) => {
         const p = LOAN_PRESETS[type];
-        setD(prev => ({
-            ...prev, type,
-            apr: touchedApr || loan ? prev.apr : String(p.apr),
-            termYears: loan ? prev.termYears : String(p.termYears),
-        }));
+        setD(prev => ({ ...prev, type, apr: touchedApr || loan ? prev.apr : String(p.apr), termYears: loan ? prev.termYears : String(p.termYears) }));
     };
 
-    const balance = parseFloat(d.balance) || 0;
-    const apr = parseFloat(d.apr) || 0;
-    const term = parseFloat(d.termYears) || LOAN_PRESETS[d.type].termYears;
+    const balance = toNumber(d.balance);
+    const apr = toNumber(d.apr);
+    const term = toNumber(d.termYears) || LOAN_PRESETS[d.type].termYears;
     const calcMin = calculateMinimumPayment(loan?.originalAmount || balance, apr, term);
-    const valid = balance > 0;
 
     const save = () => {
-        const minPayment = d.minPayment === '' ? undefined : parseFloat(d.minPayment);
+        const minPayment = d.minPayment === '' ? undefined : toNumber(d.minPayment);
         const dueDay = parseInt(d.dueDay, 10);
-        const tax = parseFloat(d.propertyTax);
+        const tax = toNumber(d.propertyTax);
         const next: Loan = {
             ...(loan ?? {}),
             id: loan?.id ?? `debt-${Date.now()}`,
             name: d.name.trim() || LOAN_PRESETS[d.type].name,
             type: d.type, balance, apr, term,
             originalAmount: loan ? (loan.originalAmount > 0 ? loan.originalAmount : balance) : balance,
-            minPaymentOverride: minPayment !== undefined && Number.isFinite(minPayment) ? minPayment : undefined,
+            minPaymentOverride: minPayment,
             dueDay: dueDay >= 1 && dueDay <= 31 ? dueDay : undefined,
             monthlyPropertyTax: d.type === LoanType.Mortgage && tax > 0 ? tax : undefined,
             status: loan?.status ?? 'active',
         };
-        // Strip undefined keys so the saved JSON stays clean.
+        // Keep the saved JSON clean: no undefined keys.
         (Object.keys(next) as (keyof Loan)[]).forEach(k => next[k] === undefined && delete next[k]);
         onSave(next);
         onClose();
     };
 
-    const setStatus = (status: DebtStatus) => {
-        if (!loan) return;
-        onSave({ ...loan, status });
-        onClose();
-    };
+    const setStatus = (status: DebtStatus) => { if (loan) { onSave({ ...loan, status }); onClose(); } };
+    const status = loan?.status ?? 'active';
 
     return (
         <Sheet open={open} onClose={onClose} title={loan ? 'Edit debt' : 'Add a debt'}>
-            <div className="flex flex-col gap-2.5">
-                <span className="text-[13px] text-dark-text-secondary">Type of debt</span>
-                <div className="flex flex-wrap gap-2">
-                    {TYPES.map(t => <Chip key={t.type} active={d.type === t.type} onClick={() => pickType(t.type)}>{t.label}</Chip>)}
-                </div>
-            </div>
-            <Field label="Name (optional)" type="text" inputMode="text" value={d.name} onChange={set('name')} placeholder={LOAN_PRESETS[d.type].name} />
-            <Field label="Balance" prefix="$" value={d.balance} onChange={set('balance')} placeholder="0" />
-            <div className="flex gap-3">
-                <Field className="flex-1" label="APR" suffix="%" value={d.apr} onChange={v => { setTouchedApr(true); set('apr')(v); }} hint={loan ? undefined : LOAN_PRESETS[d.type].hint} />
-                <Field className="flex-1" label="Minimum payment" prefix="$" value={d.minPayment} onChange={set('minPayment')}
-                    placeholder={calcMin > 0 ? String(Math.round(calcMin)) : '0'} hint={d.minPayment === '' && calcMin > 0 ? `Estimated ${money(calcMin)}/mo` : undefined} />
-            </div>
-            {d.type === LoanType.CreditCard && d.minPayment === '' && (
-                <p className="text-xs text-amber">Cards have no fixed term. Enter the minimum from your statement for accurate results.</p>
-            )}
-            <button type="button" className="text-sm text-accent font-semibold text-left" onClick={() => setMore(m => !m)} aria-expanded={more}>
-                {more ? 'Fewer details' : 'More details (term, due date)'}
-            </button>
-            {more && (
+            <Stack gap="sm">
+                <Text variant="label" color="textMuted">Type of debt</Text>
+                <Inline wrap gap="sm">{TYPES.map(t => <Chip key={t.type} active={d.type === t.type} onPress={() => pickType(t.type)}>{t.label}</Chip>)}</Inline>
+            </Stack>
+            <Inline><Field label="Name (optional)" value={d.name} onChange={set('name')} placeholder={LOAN_PRESETS[d.type].name} /></Inline>
+            <Inline><Field label="Balance" prefix="$" numeric value={d.balance} onChange={set('balance')} placeholder="0" /></Inline>
+            <Inline align="flex-start">
+                <Field label="APR" suffix="%" numeric value={d.apr} onChange={v => { setTouchedApr(true); set('apr')(v); }} hint={loan ? undefined : LOAN_PRESETS[d.type].hint} />
+                <Field label="Minimum payment" prefix="$" numeric value={d.minPayment} onChange={set('minPayment')} placeholder={calcMin > 0 ? String(Math.round(calcMin)) : '0'} hint={d.minPayment === '' && calcMin > 0 ? `Estimated ${money(calcMin)}/mo` : undefined} />
+            </Inline>
+            {d.type === LoanType.CreditCard && d.minPayment === '' ? <Text variant="caption" color="amber">Cards have no fixed term. Enter the minimum from your statement for accurate results.</Text> : null}
+            <TextButton onPress={() => setMore(m => !m)}>{more ? 'Fewer details' : 'More details (term, due date)'}</TextButton>
+            {more ? (
                 <>
-                    <div className="flex gap-3">
-                        <Field className="flex-1" label="Term (years)" value={d.termYears} onChange={set('termYears')} />
-                        <Field className="flex-1" label="Due day of month" value={d.dueDay} onChange={set('dueDay')} placeholder="e.g. 15" inputMode="numeric" />
-                    </div>
-                    {d.type === LoanType.Mortgage && (
-                        <Field label="Monthly property tax" prefix="$" value={d.propertyTax} onChange={set('propertyTax')} hint="Counted as a bill, not a payment on this loan." />
-                    )}
+                    <Inline align="flex-start">
+                        <Field label="Term (years)" numeric value={d.termYears} onChange={set('termYears')} />
+                        <Field label="Due day of month" keyboardType="number-pad" value={d.dueDay} onChange={set('dueDay')} placeholder="e.g. 15" />
+                    </Inline>
+                    {d.type === LoanType.Mortgage ? <Inline><Field label="Monthly property tax" prefix="$" numeric value={d.propertyTax} onChange={set('propertyTax')} hint="Counted as a bill, not a payment on this loan." /></Inline> : null}
                 </>
-            )}
-            <Button size="lg" disabled={!valid} onClick={save}>{loan ? 'Save changes' : 'Add debt'}</Button>
-            {loan && (
-                <div className="flex flex-col gap-2">
-                    {(loan.status ?? 'active') !== 'paid_off' && <Button variant="secondary" onClick={() => setStatus('paid_off')}>Mark as paid off</Button>}
-                    {(loan.status ?? 'active') !== 'active' && <Button variant="secondary" onClick={() => setStatus('active')}>Make active</Button>}
-                    {(loan.status ?? 'active') === 'active' && <Button variant="secondary" onClick={() => setStatus('considering')}>Move to Considering</Button>}
-                    {onDelete && <Button variant="danger" onClick={() => { if (window.confirm('Delete this debt?')) { onDelete(loan.id); onClose(); } }}>Delete</Button>}
-                </div>
-            )}
+            ) : null}
+            <Button size="lg" disabled={balance <= 0} onPress={save}>{loan ? 'Save changes' : 'Add debt'}</Button>
+            {loan ? (
+                <Stack gap="sm">
+                    {status !== 'paid_off' ? <Button variant="secondary" onPress={() => setStatus('paid_off')}>Mark as paid off</Button> : null}
+                    {status !== 'active' ? <Button variant="secondary" onPress={() => setStatus('active')}>Make active</Button> : null}
+                    {status === 'active' ? <Button variant="secondary" onPress={() => setStatus('considering')}>Move to Considering</Button> : null}
+                    {onDelete ? <Button variant="danger" onPress={async () => { if (await confirmAction('Delete this debt?', 'This cannot be undone.', 'Delete', true)) { onDelete(loan.id); onClose(); } }}>Delete</Button> : null}
+                </Stack>
+            ) : null}
         </Sheet>
     );
 };

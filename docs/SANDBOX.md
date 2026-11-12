@@ -25,10 +25,10 @@ live app (Amplify Hosting, branch main)      your sandbox (ampx sandbox)
 
 ```bash
 npm run sandbox        # terminal 1: deploys/updates your private backend, rewrites amplify_outputs.json
-npm run dev:sandbox    # terminal 2: starts the app at http://localhost:3000 with a SANDBOX badge
+npm run dev:sandbox    # terminal 2: starts the app (web, http://localhost:8081) with a SANDBOX badge
 ```
 
-`amplify_outputs.json` is git-ignored and now points at the sandbox. The header shows an amber **SANDBOX** badge and Profile shows the backend's user pool id, so you can always confirm which backend you are on. Backend code changes (schema, Plaid function) hot-redeploy while `npm run sandbox` runs.
+`amplify_outputs.json` is git-ignored and now points at the sandbox. (No AWS yet? `npm run dev:offline` creates a placeholder file so you can try guest and sample mode with no backend.) The header shows an amber **SANDBOX** badge and Profile shows the backend's user pool id, so you can always confirm which backend you are on. Backend code changes (schema, Plaid function) hot-redeploy while `npm run sandbox` runs.
 
 ## What to test
 
@@ -39,7 +39,8 @@ npm run dev:sandbox    # terminal 2: starts the app at http://localhost:3000 wit
 | Plaid | `PLAID_ENV` defaults to `sandbox`. In Plaid Link choose any bank and log in with `user_good` / `pass_good`. |
 | Bank payment detection | After linking, run Refresh in Profile → Linked accounts. Plaid's sandbox data includes sample loan/credit accounts and transactions. |
 | Reconnect state | In the Plaid dashboard's sandbox tools (or via the `/sandbox/item/reset_login` API) force `ITEM_LOGIN_REQUIRED`, then Refresh: the bank shows "Needs attention". |
-| Guest and sample modes | No backend needed. Use a private window. |
+| Guest and sample modes | No backend needed (`npm run dev:offline`). Use a private window. |
+| Phone / tablet | `npm run ios` or `npm run android` (Expo). Bank linking on a device needs a development build, not Expo Go, because the Plaid SDK is native code. |
 
 ## Cleaning up
 

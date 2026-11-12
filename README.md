@@ -25,20 +25,45 @@ A web application to help you manage your finances and create a debt payoff plan
 
 ```bash
 npm install
-npm run sandbox        # your private cloud backend (see docs/SANDBOX.md)
-npm run dev:sandbox    # the app against that sandbox
+npm run dev:offline    # web, guest + sample mode, no cloud needed
 ```
 
-Guest and sample modes work with no backend at all (they only need an `amplify_outputs.json` file to exist for the build).
-
-See **docs/SANDBOX.md** for how to test auth, the database and Plaid without touching the live app.
-
-## Build for production
+With a cloud backend (auth, database, Plaid), see **docs/SANDBOX.md**:
 
 ```bash
-npm run build
+npm run sandbox        # your private cloud backend
+npm run dev:sandbox    # the app against it, with a SANDBOX badge
+```
+
+On a phone or simulator: `npm run ios` / `npm run android` (Expo). Bank linking on a device needs a development build because the Plaid SDK is native.
+
+## Checks
+
+```bash
+npm run verify         # typecheck + design-system check + unit tests
+```
+
+## Build for production (web)
+
+```bash
+npm run build          # outputs dist/ (Expo web export)
 ```
 
 ## Technology stack
 
-React 19, TypeScript, Vite, Tailwind 4, Recharts, React Router, AWS Amplify Gen 2 (Cognito, AppSync/DynamoDB, Lambda) and Plaid.
+Expo + React Native (one codebase for web, iOS and Android), Expo Router, TypeScript, react-native-svg charts, AWS Amplify Gen 2 (Cognito, AppSync/DynamoDB, Lambda) and Plaid. The design system is in `theme/` and `components/ui/` (see **docs/DESIGN.md**).
+
+## Project layout
+
+```
+app/          routes (thin files that re-export screens) + web document shell
+screens/      one file per screen
+components/   shared pieces; components/ui is the design-system primitives
+theme/        colors, typography, spacing, layout, icons
+services/     pure logic: payoff, loan test, payments, tax, Plaid merge
+contexts/     auth and finance state
+hooks/        usePlan, useBanks, useAmplifyStorage, ...
+lib/          storage, Amplify client, Plaid launcher (web/native), dialogs
+amplify/      backend: auth, data, Plaid Lambda
+tests/        unit tests for services and bank-payment matching
+```

@@ -14,6 +14,8 @@ import {
     confirmResetPassword,
     updatePassword,
 } from 'aws-amplify/auth';
+import { storage, purgeAuthStorage } from '../lib/storage';
+import '../lib/amplify';
 
 interface AuthUser {
     userId: string;
@@ -34,6 +36,9 @@ interface AuthContextType {
     pendingAuthMode: 'signin' | 'signup' | null;
     pendingConfirmation: { email: string } | null;
     authError: string | null;
+    /** Bumps when local data is wiped, so data providers remount fresh. */
+    dataEpoch: number;
+    resetData: () => void;
     clearAuthError: () => void;
     signInWithGoogle: () => Promise<void>;
     signInWithEmail: (email: string, password: string) => Promise<void>;
@@ -71,9 +76,9 @@ const loadCurrentUser = async (): Promise<AuthUser | null> => {
 
 /** Sample data is disposable: it is never imported into an account. */
 const clearSampleData = (): void => {
-    localStorage.removeItem('sampleMode');
-    localStorage.removeItem('sample_finances');
-    localStorage.removeItem('sample_settings');
+    storage.removeItem('sampleMode');
+    storage.removeItem('sample_finances');
+    storage.removeItem('sample_settings');
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -84,6 +89,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [pendingAuthMode, setPendingAuthMode] = useState<'signin' | 'signup' | null>(null);
     const [pendingConfirmation, setPendingConfirmation] = useState<{ email: string } | null>(null);
     const [authError, setAuthError] = useState<string | null>(null);
+    const [dataEpoch, setDataEpoch] = useState(0);
 
     useEffect(() => {
         // A real signed-in session always outranks the guest flag: a guest
@@ -91,11 +97,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // short-circuited back into guest mode by the leftover flag.
         // (guest_finances/guest_settings stay untouched here so the data
         // layer's import prompt can still offer to migrate them.)
-        const wasGuest = localStorage.getItem('guestMode') === 'true';
-        const wasSample = localStorage.getItem('sampleMode') === 'true';
+        const wasGuest = storage.getItem('guestMode') === 'true';
+        const wasSample = storage.getItem('sampleMode') === 'true';
         loadCurrentUser().then(u => {
             if (u) {
-                localStorage.removeItem('guestMode');
+                storage.removeItem('guestMode');
                 clearSampleData();
                 setIsGuest(false);
                 setIsSample(false);
@@ -115,7 +121,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     // Only the guestMode flag is cleared here. guest_finances/guest_settings
                     // (the actual data) are left alone until the data layer's import prompt
                     // resolves, so a guest's local data is never silently discarded.
-                    localStorage.removeItem('guestMode');
+                    storage.removeItem('guestMode');
                     clearSampleData();
                     setIsGuest(false);
                     setIsSample(false);
@@ -138,27 +144,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return () => hubListener();
     }, []);
 
-    /**
-     * Removes every trace of Amplify/Cognito auth state from browser
-     * storage: stale sessions AND interrupted-OAuth "inflight" locks, both
-     * of which make signInWithRedirect throw. Guest-mode keys (guestMode,
-     * guest_finances, guest_settings) don't match these prefixes and are
-     * untouched.
-     */
-    const purgeStaleAuthState = (): void => {
-        for (const store of [localStorage, sessionStorage]) {
-            const stale: string[] = [];
-            for (let i = 0; i < store.length; i++) {
-                const key = store.key(i);
-                if (!key) continue;
-                if (key.startsWith('CognitoIdentityServiceProvider') || key.startsWith('com.amplify') || key.startsWith('amplify')) {
-                    stale.push(key);
-                }
-            }
-            stale.forEach(key => store.removeItem(key));
-        }
-    };
-
     const signInWithGoogle = async (): Promise<void> => {
         try {
             await signInWithRedirect({ provider: 'Google' });
@@ -171,7 +156,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } catch {
                 // No signable-out session — fine, purge below handles the rest.
             }
-            purgeStaleAuthState();
+            await purgeAuthStorage();
             await signInWithRedirect({ provider: 'Google' });
         }
     };
@@ -217,7 +202,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const continueAsGuest = () => {
-        localStorage.setItem('guestMode', 'true');
+        storage.setItem('guestMode', 'true');
         setIsGuest(true);
         setPendingAuthMode(null);
     };
@@ -225,7 +210,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const trySample = () => {
         // Start from a fresh copy of the sample profile every time.
         clearSampleData();
-        localStorage.setItem('sampleMode', 'true');
+        storage.setItem('sampleMode', 'true');
         setIsGuest(true);
         setIsSample(true);
         setPendingAuthMode(null);
@@ -234,7 +219,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Leaves the sample and drops into a regular (empty or previously saved) guest session.
     const startWithOwnData = () => {
         clearSampleData();
-        localStorage.setItem('guestMode', 'true');
+        storage.setItem('guestMode', 'true');
         setIsSample(false);
         setIsGuest(true);
     };
@@ -265,9 +250,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setIsSample(false);
             setIsGuest(false);
         } else if (isGuest) {
-            localStorage.removeItem('guestMode');
-            localStorage.removeItem('guest_finances');
-            localStorage.removeItem('guest_settings');
+            storage.removeItem('guestMode');
+            storage.removeItem('guest_finances');
+            storage.removeItem('guest_settings');
             setIsGuest(false);
         } else {
             await amplifySignOut();
@@ -278,7 +263,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return (
         <AuthContext.Provider value={{
             user, isGuest, isSample, loading, pendingAuthMode, pendingConfirmation,
-            authError, clearAuthError: () => setAuthError(null),
+            authError, clearAuthError: () => setAuthError(null), dataEpoch, resetData: () => setDataEpoch(e => e + 1),
             signInWithGoogle, signInWithEmail, signUpWithEmail, confirmSignUpCode, resendConfirmationCode,
             continueAsGuest, trySample, startWithOwnData, signOut, openAuth, closeAuth,
             requestPasswordReset, confirmPasswordReset, changePassword,
