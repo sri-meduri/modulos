@@ -72,3 +72,5 @@ The new features add fields and one mutation argument; nothing is renamed or rem
 * `Finances`: `payments`, `balanceHistory`
 * `Settings`: `strategy`, `extraPayment`, `customOrder`, `targetDate`, `onboardingDone`, `bankNudgeDismissed`, `payeeRules`, `ignoredCandidates`
 * `createPlaidLinkToken(itemId)` (Plaid update mode for Reconnect); `syncPlaidData` also returns `payments`, `paymentCandidates`, `attentionItemIds`
+
+<!-- Staging deploy trigger: 2026-11-12T09:14Z -->
