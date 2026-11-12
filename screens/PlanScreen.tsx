@@ -7,10 +7,8 @@ import { PayoffStrategy } from '../types';
 import { usePlan } from '../hooks/usePlan';
 import { addMonths, extraForTarget, formatDuration, formatMonthYear, formatMonthYearLong, monthsBetweenNow, payoffLabel, simulatePayoff } from '../services/payoff';
 import { getEffectiveMinPayment } from '../services/loanCalculator';
-import { monthlyPaymentPlan, paymentPlanCalendar, paymentPlanText } from '../services/payPlan';
-import { sharePlan } from '../lib/share';
 import { money, toNumber } from '../lib/format';
-import { Badge, Button, Card, Chart, checkpoints, Chip, CheckMark, Dot, Field, Grid, Icon, Inline, Legend, PageTitle, Screen, Section, SegTabs, Select, Slider, Stack, StackedBar, Stepper, Text, TextButton } from '../components/ui';
+import { Badge, Button, Card, Chart, checkpoints, Chip, CheckMark, Dot, Field, Grid, Inline, Legend, PageTitle, Screen, Section, SegTabs, Select, Slider, Stack, StackedBar, Stepper, Text, TextButton } from '../components/ui';
 
 const STRATEGIES: { value: PayoffStrategy; label: string }[] = [
     { value: 'avalanche', label: 'Avalanche' },
@@ -45,7 +43,6 @@ const PlanScreen: React.FC = () => {
     const [refiId, setRefiId] = useState('');
     const [refiApr, setRefiApr] = useState('');
     const [customText, setCustomText] = useState('');
-    const [shared, setShared] = useState<string | null>(null);
 
     // Money available for debt payoff = what is left after bills and minimums. The extra can
     // never exceed it, so "Left after your extra" can never go negative.
@@ -132,12 +129,6 @@ const PlanScreen: React.FC = () => {
         if (i < 0 || j < 0 || j >= order.length) return;
         [order[i], order[j]] = [order[j], order[i]];
         setSettings(p => ({ ...p, customOrder: order }));
-    };
-
-    const schedule = useMemo(() => monthlyPaymentPlan(activeLoans, extra, plan.strategy, plan.customOrder), [activeLoans, extra, plan.strategy, plan.customOrder]);
-    const exportPlan = async () => {
-        const how = await sharePlan(paymentPlanCalendar(schedule), paymentPlanText(schedule));
-        setShared(how === 'downloaded' ? 'Calendar file downloaded. Open it to add monthly reminders.' : how === 'shared' ? null : 'Could not share the plan.');
     };
 
     if (activeLoans.length === 0) {
@@ -314,41 +305,10 @@ const PlanScreen: React.FC = () => {
                             ) : null}
                         </Card>
                     </Section>
-
-                    <Section title="Put it into action">
-                        <Card gap="md">
-                            {isGuest ? (
-                                <>
-                                    <Text variant="small" color="textMuted">Sign in to get a monthly payment schedule, calendar reminders and an autopay checklist for this plan.</Text>
-                                    <Button compact onPress={() => openAuth('signup')}>Sign in or create an account</Button>
-                                </>
-                            ) : (
-                                <>
-                                    <Text variant="small" color="textMuted">Pay this each month. Set it up as autopay with each lender, or add reminders to your calendar.</Text>
-                                    <Stack gap="sm">
-                                        {schedule.map(p => (
-                                            <Inline key={p.loanId} justify="space-between" gap="md" align="flex-start">
-                                                <Stack gap="xs" style={{ flex: 1 }}>
-                                                    <Text variant="smallStrong" numberOfLines={1}>{p.name}</Text>
-                                                    <Text variant="caption" color="textMuted">{p.dueKnown ? `Due by the ${p.dayOfMonth}${suffix(p.dayOfMonth)}` : 'Add a due day on the debt for reminders'}{p.extra > 0 ? ` · includes ${money(p.extra)} extra` : ''}</Text>
-                                                </Stack>
-                                                <Text variant="smallStrong" color={p.isFocus ? 'accent' : 'text'}>{money(p.amount)}</Text>
-                                            </Inline>
-                                        ))}
-                                    </Stack>
-                                    <Button variant="secondary" onPress={exportPlan}>Add monthly reminders to my calendar</Button>
-                                    {shared ? <Text variant="caption" color="accent">{shared}</Text> : null}
-                                    <Inline align="flex-start" gap="sm"><Icon name="lock" size={16} color="textMuted" /><Text variant="caption" color="textMuted" style={{ flex: 1 }}>Modulos can’t move money for you. Payments are made in your bank or with your lender.</Text></Inline>
-                                </>
-                            )}
-                        </Card>
-                    </Section>
                 </Stack>
             </Grid>
         </Screen>
     );
 };
-
-const suffix = (n: number) => (n % 100 >= 11 && n % 100 <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'));
 
 export default PlanScreen;

@@ -120,7 +120,7 @@ export interface Finances {
     /** Month-end total of active debt balances, for the real history chart. */
     balanceHistory?: { month: string; balance: number }[];
     /** Month-end totals of bank-linked assets; the Assets tab shows retirement growth from this. */
-    assetHistory?: { month: string; total: number; retirement: number }[];
+    assetHistory?: { month: string; total: number; retirement: number; /** All assets minus active debt. */ net?: number }[];
 }
 
 export interface Settings {

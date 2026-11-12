@@ -247,7 +247,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     useEffect(() => {
         if (loading) return;
         setFinances(prev => recordAssetSnapshot(prev));
-    }, [finances.assets, loading, setFinances]);
+    }, [finances.assets, finances.loans, loading, setFinances]);
 
     const bankLinked = useMemo(
         () => finances.loans.some(l => l.plaidItemId) || finances.expenses.some(e => e.plaidItemId) || (finances.assets ?? []).some(a => a.plaidItemId) || (finances.incomeExpenseHistory ?? []).length > 0,

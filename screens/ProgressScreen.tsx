@@ -8,9 +8,17 @@ import { formatMonthYear } from '../services/payoff';
 import { getEffectiveMinPayment } from '../services/loanCalculator';
 import { money, toNumber } from '../lib/format';
 import { colors } from '../theme';
+import BankGate from '../components/BankGate';
 import { BarChart, Button, Card, Chart, checkpoints, Chip, Field, Grid, Icon, Inline, Legend, PageTitle, ProgressBar, Screen, Section, Sheet, Stack, Text, TextButton } from '../components/ui';
 
 const fmtDate = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+const PlanVsActual: React.FC<{ months: { label: string; planned: number; actual: number }[] }> = ({ months }) => (
+    <Stack gap="sm">
+        <BarChart label="Planned payments compared with payments actually made, by month" colors={[colors.line, colors.accent]} groups={months.map(m => ({ label: m.label, values: [m.planned, m.actual] }))} />
+        <Legend items={[{ label: 'Planned', color: colors.line }, { label: 'Actual', color: colors.accent }]} />
+    </Stack>
+);
 
 const ProgressScreen: React.FC = () => {
     const { finances, setFinances, activeLoans, paymentCandidates, resolveCandidate, bankLinked } = useFinance();
@@ -27,6 +35,8 @@ const ProgressScreen: React.FC = () => {
     const thisMonth = months[months.length - 1];
     const gap = thisMonth.actual - thisMonth.planned;
     const nextUp = milestones.find(m => !m.done);
+    // Illustrative bars for the locked preview: planned vs a realistic-looking actual.
+    const demoMonths = months.map((m, i) => ({ ...m, actual: Math.round(plannedMonthly * [0.92, 1, 1.12, 0.96, 1.05, 0.55][i % 6]) }));
     const payments = finances.payments ?? [];
     const loanName = (id: string, p?: Payment) => finances.loans.find(l => l.id === id)?.name ?? p?.payee ?? 'Debt';
     const unconfirmed = payments.filter(p => p.source === 'detected' && !p.confirmed);
@@ -88,25 +98,21 @@ const ProgressScreen: React.FC = () => {
                         <ProgressBar value={progress.percent} label="Total paid off" />
                         {progress.extraPaidTotal > 0 ? <Text variant="smallStrong" color="accent">{money(progress.extraPaidTotal)} paid above minimums so far.</Text> : null}
                     </Card>
-                    {bankLinked && plannedMonthly > 0 ? (
+                    {plannedMonthly > 0 ? (
                         <Card gap="md">
                             <Inline justify="space-between"><Text variant="h3">Plan vs actual</Text><Text variant="label" color="textMuted">last 6 months</Text></Inline>
-                            <BarChart label="Planned payments compared with payments actually made, by month" colors={[colors.line, colors.accent]} groups={months.map(m => ({ label: m.label, values: [m.planned, m.actual] }))} />
-                            <Legend items={[{ label: 'Planned', color: colors.line }, { label: 'Actual', color: colors.accent }]} />
-                            <ProgressBar value={thisMonth.planned > 0 ? thisMonth.actual / thisMonth.planned : 0} label="This month's payments against plan" />
-                            <Inline justify="space-between" gap="md">
-                                <Text variant="small">This month: {money(thisMonth.actual)} of {money(thisMonth.planned)}</Text>
-                                <Text variant="smallStrong" color={gap >= 0 ? 'accent' : 'amber'}>{gap >= 0 ? (gap > 0 ? `${money(gap)} ahead` : 'On plan') : `${money(-gap)} to go`}</Text>
-                            </Inline>
-                            <Text variant="caption" color="textMuted">Plan = every minimum payment plus your {money(plan.extra)} extra. Change it in Plan.</Text>
+                            <BankGate locked={!bankLinked} title="Plan vs actual" benefit="See what you planned to pay each month next to what you really paid, from the dates in your bank accounts."
+                                preview={<PlanVsActual months={demoMonths} />}>
+                                <PlanVsActual months={months} />
+                                <ProgressBar value={thisMonth.planned > 0 ? thisMonth.actual / thisMonth.planned : 0} label="This month's payments against plan" />
+                                <Inline justify="space-between" gap="md">
+                                    <Text variant="small">This month: {money(thisMonth.actual)} of {money(thisMonth.planned)}</Text>
+                                    <Text variant="smallStrong" color={gap >= 0 ? 'accent' : 'amber'}>{gap >= 0 ? (gap > 0 ? `${money(gap)} ahead` : 'On plan') : `${money(-gap)} to go`}</Text>
+                                </Inline>
+                                <Text variant="caption" color="textMuted">Plan = every minimum payment plus your {money(plan.extra)} extra. Change it in Plan.</Text>
+                            </BankGate>
                         </Card>
-                    ) : (
-                        <Card tone="outline" gap="sm">
-                            <Text variant="bodyStrong">Plan vs actual</Text>
-                            <Text variant="small" color="textMuted">Connect a bank to compare what you planned with what you actually paid each month. We read the real payment dates from your accounts.</Text>
-                            <Link href="/profile/accounts"><Text variant="smallStrong" color="accent">Connect a bank</Text></Link>
-                        </Card>
-                    )}
+                    ) : null}
                     {history.length >= 2 ? (
                         <Card gap="sm">
                             <Text variant="label" color="textMuted">Balance history</Text>

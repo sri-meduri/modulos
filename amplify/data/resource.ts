@@ -34,7 +34,7 @@ const schema = a.schema({
       incomeExpenseHistory: a.json(),
       // Rolling [{month, balance}] of total active debt, recorded as the app is used.
       balanceHistory: a.json(),
-      // Rolling [{month, total, retirement}] of bank-linked asset balances (Assets tab performance).
+      // Rolling [{month, total, retirement, net}] of bank-linked balances and net worth (Assets tab).
       assetHistory: a.json(),
     })
     .authorization((allow) => [allow.owner()]),

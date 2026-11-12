@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { effectiveGrossIncome } from '../services/income';
-import { monthlyPaymentPlan, paymentPlanCalendar, paymentPlanText } from '../services/payPlan';
-import { groupAssets, recordAssetSnapshot, retirementPerformance } from '../services/assets';
+import { groupAssets, netWorthTimeline, recordAssetSnapshot, retirementPerformance } from '../services/assets';
+import { projectRetirement } from '../services/retirement';
 import { compactMoney, niceTicks } from '../lib/format';
 import { formatDuration } from '../services/payoff';
 import { checkpoints } from '../lib/chartTicks';
@@ -35,30 +35,6 @@ describe('effectiveGrossIncome (auto gross for DTI)', () => {
     });
 });
 
-describe('payment plan (put it into action)', () => {
-    it('puts the whole extra on the focus debt and keeps minimums on the rest', () => {
-        const plan = monthlyPaymentPlan(loans as never, 200, 'avalanche');
-        expect(plan[0].loanId).toBe('card');
-        expect(plan[0].amount).toBe(290);
-        expect(plan[0].isFocus).toBe(true);
-        expect(plan[1].extra).toBe(0);
-        expect(plan[0].dayOfMonth).toBe(12);
-        expect(plan[1].dueKnown).toBe(false);
-    });
-    it('builds a monthly recurring calendar with a reminder per debt', () => {
-        const ics = paymentPlanCalendar(monthlyPaymentPlan(loans as never, 200, 'avalanche'), new Date(Date.UTC(2026, 10, 1)));
-        expect(ics.startsWith('BEGIN:VCALENDAR')).toBe(true);
-        expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(2);
-        expect(ics).toContain('RRULE:FREQ=MONTHLY');
-        expect(ics).toContain('SUMMARY:Pay $290 to Visa');
-        expect(ics).toContain('DTSTART;VALUE=DATE:20261112');
-    });
-    it('describes the plan as text for sharing', () => {
-        const text = paymentPlanText(monthlyPaymentPlan(loans as never, 200, 'avalanche'));
-        expect(text).toContain('Visa: $290 (includes $200 extra) by the 12th');
-    });
-});
-
 describe('assets', () => {
     const f = (over: Partial<Finances> = {}): Finances => ({ ...base, expenses: [], loans: [], incomeType: 'net', ...over } as Finances);
     it('groups by type with shares that sum to 1', () => {
@@ -77,7 +53,7 @@ describe('assets', () => {
         expect(recordAssetSnapshot(manual)).toBe(manual);
         const linked = f({ assets: [{ id: 'a', name: '401k', type: AssetType.Retirement, value: 50000, plaidItemId: 'i' }] });
         const s1 = recordAssetSnapshot(linked, new Date(2026, 8, 15));
-        expect(s1.assetHistory).toEqual([{ month: '2026-09', total: 50000, retirement: 50000 }]);
+        expect(s1.assetHistory).toEqual([{ month: '2026-09', total: 50000, retirement: 50000, net: 50000 }]);
         expect(recordAssetSnapshot(s1, new Date(2026, 8, 20))).toBe(s1);
         const later = recordAssetSnapshot({ ...s1, assets: [{ ...linked.assets![0], value: 55000 }] }, new Date(2026, 10, 3));
         const perf = retirementPerformance(later)!;
@@ -85,6 +61,14 @@ describe('assets', () => {
         expect(perf.percent).toBeCloseTo(0.1, 6);
         expect(perf.months).toBe(1);
         expect(retirementPerformance(s1)).toBeNull();
+        expect(netWorthTimeline(later).map(p => p.net)).toEqual([50000, 55000]);
+    });
+    it('net worth subtracts active debt and counts manual assets too', () => {
+        const f2 = f({
+            assets: [{ id: 'a', name: '401k', type: AssetType.Retirement, value: 50000, plaidItemId: 'i' }, { id: 'h', name: 'Home', type: AssetType.RealEstate, value: 300000 }],
+            loans: [{ id: 'l', name: 'Mortgage', type: LoanType.Mortgage, balance: 200000, apr: 6, term: 30, originalAmount: 250000 }],
+        });
+        expect(recordAssetSnapshot(f2, new Date(2026, 8, 15)).assetHistory![0].net).toBe(150000);
     });
 });
 
@@ -124,5 +108,26 @@ describe('wording and categories', () => {
         expect(expenseCategory({ id: 'gym', name: 'Gym membership', amount: 1 })).toBe('Other');
         const r = allocateIncome(5000, [{ id: 'a', name: 'Pet', amount: 100, category: 'Other' }], 0, 0);
         expect(r.slices.find(s => s.label === 'Other')?.amount).toBe(100);
+    });
+});
+
+describe('retirement predictor', () => {
+    it('compounds a balance with monthly contributions', () => {
+        const r = projectRetirement({ balance: 50000, monthlyContribution: 500, annualReturnPct: 7, years: 30 });
+        expect(r.yearly).toHaveLength(31);
+        expect(r.yearly[0]).toBe(50000);
+        expect(r.final).toBeGreaterThan(960000);
+        expect(r.final).toBeLessThan(970000);
+        expect(r.contributed).toBe(180000);
+        expect(r.growth).toBeCloseTo(r.final - 50000 - 180000, 4);
+    });
+    it('with a zero return is just balance plus contributions', () => {
+        const r = projectRetirement({ balance: 1000, monthlyContribution: 100, annualReturnPct: 0, years: 2 });
+        expect(r.final).toBeCloseTo(3400, 6);
+    });
+    it('handles no time horizon', () => {
+        const r = projectRetirement({ balance: 1000, monthlyContribution: 100, annualReturnPct: 7, years: 0 });
+        expect(r.yearly).toEqual([1000]);
+        expect(r.final).toBe(1000);
     });
 });

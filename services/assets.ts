@@ -1,4 +1,5 @@
 import { Asset, AssetType, Finances } from '../types';
+import { isActiveLoan } from './payoff';
 
 export interface AssetGroup { type: AssetType; total: number; share: number; count: number }
 
@@ -16,21 +17,28 @@ export const groupAssets = (assets: Asset[]): AssetGroup[] => {
         .sort((a, b) => b.total - a.total);
 };
 
+const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+
 /**
- * Month-end snapshot of bank-linked assets. Only accounts that came from a bank are
- * recorded, because manual values are not real balances over time. Returns the same
- * object when nothing changed so callers can skip saving.
+ * Month-end snapshot used for the net worth timeline and retirement performance.
+ * It is recorded only once a bank is linked: before that, values are typed in and say
+ * nothing real about change over time. `retirement` counts bank-linked retirement
+ * accounts only; `net` is all assets minus active debt. Returns the same object when
+ * nothing changed so callers can skip saving.
  */
 export const recordAssetSnapshot = (f: Finances, now: Date = new Date()): Finances => {
-    const linked = (f.assets ?? []).filter(a => a.plaidItemId);
-    if (linked.length === 0) return f;
-    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const assets = f.assets ?? [];
+    const linked = assets.filter(a => a.plaidItemId);
+    const hasBank = linked.length > 0 || f.loans.some(l => l.plaidItemId);
+    if (!hasBank) return f;
+    const month = monthKey(now);
     const total = Math.round(linked.reduce((a, x) => a + x.value, 0));
     const retirement = Math.round(linked.filter(a => a.type === AssetType.Retirement).reduce((a, x) => a + x.value, 0));
+    const net = Math.round(assets.reduce((a, x) => a + x.value, 0) - f.loans.filter(isActiveLoan).reduce((a, l) => a + l.balance, 0));
     const history = f.assetHistory ?? [];
     const existing = history.find(h => h.month === month);
-    if (existing && existing.total === total && existing.retirement === retirement) return f;
-    return { ...f, assetHistory: [...history.filter(h => h.month !== month), { month, total, retirement }].sort((a, b) => a.month.localeCompare(b.month)).slice(-36) };
+    if (existing && existing.total === total && existing.retirement === retirement && existing.net === net) return f;
+    return { ...f, assetHistory: [...history.filter(h => h.month !== month), { month, total, retirement, net }].sort((a, b) => a.month.localeCompare(b.month)).slice(-36) };
 };
 
 export interface Performance { first: number; last: number; change: number; percent: number; months: number }
@@ -43,3 +51,7 @@ export const retirementPerformance = (f: Finances): Performance | null => {
     const last = h[h.length - 1].retirement;
     return { first, last, change: last - first, percent: first > 0 ? (last - first) / first : 0, months: h.length - 1 };
 };
+
+/** Net worth by month from the recorded snapshots (only months that have one). */
+export const netWorthTimeline = (f: Finances): { month: string; net: number }[] =>
+    (f.assetHistory ?? []).filter((h): h is typeof h & { net: number } => typeof h.net === 'number').map(h => ({ month: h.month, net: h.net }));

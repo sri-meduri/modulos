@@ -11,6 +11,7 @@ import { Expense } from '../types';
 import { money } from '../lib/format';
 import { BarChart, Badge, Button, Card, Chip, Dot, Grid, Icon, Inline, Legend, PageTitle, Screen, Section, SegTabs, Stack, StackedBar, Text } from '../components/ui';
 import IncomeCard from '../components/IncomeCard';
+import BankGate from '../components/BankGate';
 import AddExpenseSheet, { CATEGORY_LABELS } from '../components/AddExpenseSheet';
 import PlaidLinkButton from '../components/PlaidLinkButton';
 
@@ -18,6 +19,13 @@ type Tab = 'summary' | 'income' | 'expenses';
 
 const fullDate = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
 const monthName = (key: string) => new Date(`${key}-15T12:00:00`).toLocaleDateString('en-US', { month: 'short' });
+
+const IncomeVsExpenses: React.FC<{ groups: { label: string; values: number[] }[] }> = ({ groups }) => (
+    <Stack gap="sm">
+        <BarChart label="Income and expenses by month, from your bank" colors={[colors.accent, colors.series[2]]} groups={groups} />
+        <Legend items={[{ label: 'Income', color: colors.accent }, { label: 'Expenses', color: colors.series[2] }]} />
+    </Stack>
+);
 
 const BudgetScreen: React.FC = () => {
     const { isSample } = useAuth();
@@ -38,6 +46,12 @@ const BudgetScreen: React.FC = () => {
 
     // Income vs bills by month comes from the bank's real transaction dates, so it exists only with a linked bank.
     const history = useMemo(() => (finances.incomeExpenseHistory ?? []).filter(m => m.income > 0 || m.expenses > 0), [finances.incomeExpenseHistory]);
+
+    // Illustrative bars for the locked preview, scaled to the user's own numbers.
+    const demoIncome = finances.monthlyNetIncome || 5000;
+    const demoSpend = monthlyExpensesTotal || demoIncome * 0.6;
+    const demoLabels = Array.from({ length: 6 }, (_, i) => new Date(new Date().getFullYear(), new Date().getMonth() - (5 - i), 1).toLocaleDateString('en-US', { month: 'short' }));
+    const demoGroups = demoLabels.map((label, i) => ({ label, values: [Math.round(demoIncome * [1, 1, 1.04, 1, 1, 1.02][i]), Math.round(demoSpend * [0.95, 1.05, 0.9, 1.1, 0.98, 1.02][i])] }));
 
     const grouped = useMemo(() => {
         const byCat = new Map<string, Expense[]>();
@@ -93,20 +107,16 @@ const BudgetScreen: React.FC = () => {
                         )}
                     </Stack>
                     <Stack gap="lg">
-                        {bankLinked && history.length >= 2 ? (
-                            <Section title={`Income vs expenses, last ${history.length} months`}>
-                                <Card gap="md">
-                                    <BarChart label="Income and expenses by month, from your bank" colors={[colors.accent, colors.series[2]]} groups={history.map(m => ({ label: monthName(m.month), values: [m.income, m.expenses] }))} />
-                                    <Legend items={[{ label: 'Income', color: colors.accent }, { label: 'Expenses', color: colors.series[2] }]} />
-                                </Card>
-                            </Section>
-                        ) : (
-                            <Card tone="outline" gap="sm">
-                                <Text variant="bodyStrong">Income vs expenses over time</Text>
-                                <Text variant="small" color="textMuted">Connect a bank to see this month by month. We use the real dates of your deposits and spending, which can’t be entered by hand.</Text>
-                                {loaded && !isSample && banks.length === 0 ? <PlaidLinkButton size="md" variant="secondary" /> : null}
+                        <Section title={bankLinked && history.length >= 2 ? `Income vs expenses, last ${history.length} months` : 'Income vs expenses by month'}>
+                            <Card gap="md">
+                                <BankGate locked={!bankLinked} title="Income vs expenses over time" benefit="See your real income and spending month by month, from the dates in your bank accounts."
+                                    preview={<IncomeVsExpenses groups={demoGroups} />}>
+                                    {history.length >= 2
+                                        ? <IncomeVsExpenses groups={history.map(m => ({ label: monthName(m.month), values: [m.income, m.expenses] }))} />
+                                        : <Text variant="small" color="textMuted">Your bank is connected. The chart appears once we have two months of activity.</Text>}
+                                </BankGate>
                             </Card>
-                        )}
+                        </Section>
                     </Stack>
                 </Grid>
             ) : null}
