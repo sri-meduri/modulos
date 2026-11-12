@@ -7,7 +7,8 @@ import { PayoffStrategy } from '../types';
 import { usePlan } from '../hooks/usePlan';
 import { addMonths, extraForTarget, formatDuration, formatMonthYear, monthsBetweenNow, payoffLabel, simulatePayoff } from '../services/payoff';
 import { money } from '../lib/format';
-import { Avatar, Badge, Button, Card, Chart, Chip, Field, Grid, Inline, Legend, PageTitle, Screen, Section, SegTabs, Select, Slider, Stack, Text, TextButton } from '../components/ui';
+import { Avatar, Badge, Button, Card, Chart, Chip, Field, Grid, Inline, Legend, PageTitle, Screen, Section, SegTabs, Select, Slider, StackedBar, Dot, Stack, Stepper, Text, TextButton } from '../components/ui';
+import { getEffectiveMinPayment } from '../services/loanCalculator';
 
 const STRATEGIES: { value: PayoffStrategy; label: string }[] = [
     { value: 'avalanche', label: 'Avalanche' },
@@ -39,11 +40,27 @@ const PlanScreen: React.FC = () => {
     const [refiId, setRefiId] = useState('');
     const [refiApr, setRefiApr] = useState('');
 
-    // Realistic slider range: leftover cash, but never fiddly-huge or tiny.
-    const cap = Math.max(100, Math.min(1000, roundTo(Math.max(0, monthlyLeftoverMoney), 50)));
+    // Money available for debt payoff = what is left after bills and minimums. The slider runs
+    // from $0 to that amount, so its right end is always "use everything available".
+    const available = Math.max(0, Math.floor(monthlyLeftoverMoney));
+    const cap = Math.max(25, Math.floor(available / 25) * 25);
+    const [payView, setPayView] = useState<'total' | 'debt'>('total');
     const extra = plan.extra;
     const setExtra = (v: number) => setSettings(p => ({ ...p, extraPayment: Math.max(0, Math.round(v)) }));
     const names = useMemo(() => new Map(finances.loans.map(l => [l.id, l.name])), [finances.loans]);
+
+    const paySegments = useMemo(() => {
+        const mins = activeLoans.map(l => ({ id: l.id, name: l.name, amount: getEffectiveMinPayment(l) }));
+        const total = (plan.plan.totalMinimum + extra) || 1;
+        const out: { key: string; label: string; amount: number; share: number; color: string }[] = [];
+        if (payView === 'total') {
+            out.push({ key: 'min', label: 'Minimum payments', amount: plan.plan.totalMinimum, share: plan.plan.totalMinimum / total, color: colors.series[2] });
+        } else {
+            plan.plan.order.forEach((id, k) => { const m = mins.find(x => x.id === id); if (m) out.push({ key: id, label: `${m.name} minimum`, amount: m.amount, share: m.amount / total, color: colors.series[(k + 2) % colors.series.length] }); });
+        }
+        if (extra > 0) out.push({ key: 'extra', label: 'Extra payment', amount: extra, share: extra / total, color: colors.accent });
+        return out;
+    }, [activeLoans, plan, extra, payView]);
 
     const horizon = Math.max(plan.baseline.months, plan.plan.months);
     const compare = useMemo(() => {
@@ -124,16 +141,35 @@ const PlanScreen: React.FC = () => {
                     </Stack>
 
                     <Card gap="md">
-                        <Inline justify="space-between" align="baseline">
-                            <Text variant="label" color="textMuted">Extra each month</Text>
-                            <Text variant="hero">{money(extra)}</Text>
-                        </Inline>
+                        <Text variant="label" color="textMuted">Extra each month</Text>
+                        <Stepper label="extra payment" value={extra} step={25} min={0} max={Math.max(cap, extra)} onChange={setExtra} format={money} />
                         <Slider label="Extra payment per month" value={Math.min(extra, cap)} min={0} max={cap} step={25} onChange={setExtra} valueText={`${money(extra)} extra per month`} />
+                        <Inline justify="space-between"><Text variant="caption" color="textMuted">{money(0)}</Text><Text variant="caption" color="accent">Available for debt payoff: {money(available)}/mo</Text></Inline>
                         <Inline wrap gap="sm">
-                            {[50, 100, 250, 500].filter(v => v <= Math.max(cap, 100)).map(v => <Chip key={v} active={extra === v} onPress={() => setExtra(v)}>{money(v)}</Chip>)}
+                            {[50, 100, 250, 500].filter(v => v < available).map(v => <Chip key={v} active={extra === v} onPress={() => setExtra(v)}>{money(v)}</Chip>)}
+                            {available > 0 ? <Chip active={extra === available} onPress={() => setExtra(available)}>{`Use all available · ${money(available)}`}</Chip> : null}
                             <Chip active={extra === 0} onPress={() => setExtra(0)}>None</Chip>
                         </Inline>
-                        {monthlyLeftoverMoney > 0 && extra > monthlyLeftoverMoney ? <Text variant="caption" color="amber">That’s more than the {money(monthlyLeftoverMoney)} you have left over each month.</Text> : null}
+                        <Inline justify="space-between">
+                            <Text variant="small" color="textMuted">Left after your extra</Text>
+                            <Text variant="smallStrong" color={monthlyLeftoverMoney - extra < 0 ? 'risk' : 'text'}>{money(monthlyLeftoverMoney - extra)}/mo</Text>
+                        </Inline>
+                        {extra > available ? <Text variant="caption" color="amber">That’s more than the {money(available)} you have available after bills and minimums.</Text> : null}
+                    </Card>
+
+                    <Card gap="md">
+                        <Inline justify="space-between"><Text variant="h3">Monthly payment</Text><Text variant="stat">{money(plan.plan.totalMinimum + extra)}</Text></Inline>
+                        <SegTabs label="Payment breakdown" value={payView} options={[{ value: 'total', label: 'Minimum + extra' }, { value: 'debt', label: 'By debt' }]} onChange={setPayView} />
+                        <StackedBar label="How your monthly debt payment is made up" segments={paySegments} />
+                        <Stack gap="sm">
+                            {paySegments.map(seg => (
+                                <Inline key={seg.key} justify="space-between" gap="md">
+                                    <Inline gap="sm" style={{ flex: 1 }}><Dot color={seg.color} /><Text variant="small" numberOfLines={1} style={{ flex: 1 }}>{seg.label}</Text></Inline>
+                                    <Text variant="smallStrong">{money(seg.amount)}</Text>
+                                </Inline>
+                            ))}
+                        </Stack>
+                        {extra > 0 && plan.plan.order[0] ? <Text variant="caption" color="textMuted">Your extra goes to {names.get(plan.plan.order[0])}, then rolls to the next debt as each one is paid off.</Text> : null}
                     </Card>
 
                     {isGuest && !isSample && extra > 0 ? (

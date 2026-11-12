@@ -238,6 +238,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const loading = financesLoading || settingsLoading;
 
+    // Record a rolling 12-month history of take-home pay vs. bills; the current month is
+    // upserted as the totals change, so the Budget history chart fills in over time.
+    useEffect(() => {
+        if (loading) return;
+        const income = finances.monthlyNetIncome;
+        const expenses = monthlyExpensesTotal;
+        if (income === 0 && expenses === 0) return; // don't record a pristine month
+        const monthKey = new Date().toISOString().slice(0, 7);
+        setFinances(prev => {
+            const history = prev.incomeExpenseHistory ?? [];
+            const existing = history.find(h => h.month === monthKey);
+            if (existing && existing.income === income && existing.expenses === expenses) return prev;
+            return { ...prev, incomeExpenseHistory: [...history.filter(h => h.month !== monthKey), { month: monthKey, income, expenses }].sort((a, b) => a.month.localeCompare(b.month)).slice(-12) };
+        });
+    }, [finances.monthlyNetIncome, monthlyExpensesTotal, loading, setFinances]);
+
     // Record total active debt per month so the Overview/Progress charts show
     // real history (the current month is upserted as balances change).
     useEffect(() => {

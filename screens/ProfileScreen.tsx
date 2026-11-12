@@ -7,14 +7,16 @@ import { useBanks } from '../hooks/useBanks';
 import { appEnvLabel } from '../lib/env';
 import { backendLabel } from '../lib/amplify';
 import { confirmAction } from '../lib/dialog';
-import { Avatar, Button, Card, Field, Icon, Inline, PageTitle, Screen, Section, Sheet, Stack, Text, TextButton } from '../components/ui';
+import { Avatar, Button, Card, Field, Icon, Inline, PageTitle, Screen, Section, SegTabs, Sheet, Stack, Text, TextButton } from '../components/ui';
+import { RISK_LABELS } from '../services/loanTest';
+import { RiskProfile } from '../types';
 
 const PASSWORD_REQUIREMENTS = 'Password must be at least 8 characters and include uppercase and lowercase letters, a number, and a special character (e.g. !@#$%).';
 
 const ProfileScreen: React.FC = () => {
     const router = useRouter();
     const { user, isGuest, isSample, signOut, openAuth, changePassword } = useAuth();
-    const { deleteAllData } = useFinance();
+    const { deleteAllData, settings, setSettings } = useFinance();
     const { banks, signedIn } = useBanks();
     const [pwOpen, setPwOpen] = useState(false);
     const [cur, setCur] = useState('');
@@ -92,6 +94,14 @@ const ProfileScreen: React.FC = () => {
                 </Inline>
             </Card>
 
+            <Section title="Risk profile">
+                <Card gap="md">
+                    <Text variant="small" color="textMuted">Sets the debt-to-income limit used when you test a new loan and on your Overview.</Text>
+                    <SegTabs label="Risk profile" value={settings.riskProfile} options={[RiskProfile.Low, RiskProfile.Average, RiskProfile.High].map(v => ({ value: v, label: `${RISK_LABELS[v].label} · ${RISK_LABELS[v].percent}` }))} onChange={v => setSettings(p => ({ ...p, riskProfile: v }))} />
+                    <Text variant="caption" color="textMuted">{RISK_LABELS[settings.riskProfile].blurb}</Text>
+                </Card>
+            </Section>
+
             {!isGuest && user?.signInMethod === 'email' ? <Button variant="secondary" onPress={() => setPwOpen(true)}>Change password</Button> : null}
 
             <Section title="Data and privacy">
@@ -99,6 +109,15 @@ const ProfileScreen: React.FC = () => {
                     <Text variant="small" color="textMuted">Modulos shows general educational guidance, not financial advice. We never sell your data, and bank access is read-only.</Text>
                     <TextButton onPress={() => router.push('/privacy')}>Privacy policy</TextButton>
                     <Button variant="danger" onPress={handleDelete}>Delete all my data</Button>
+                </Card>
+            </Section>
+
+            <Section title="About Modulos">
+                <Card gap="sm">
+                    <Text variant="small" color="textMuted">Modulos helps you decide whether a loan is affordable before you borrow, and pay your debts off faster after you do. It works with no bank login; connecting a bank is optional.</Text>
+                    <Text variant="small" color="textMuted">• Loan affordability with debt-to-income and a safe / borderline / not-recommended verdict</Text>
+                    <Text variant="small" color="textMuted">• Avalanche, Snowball or custom payoff plans, with what-ifs</Text>
+                    <Text variant="small" color="textMuted">• A tax-aware take-home calculator and a budget that shows where your money goes</Text>
                 </Card>
             </Section>
 

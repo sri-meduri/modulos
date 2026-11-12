@@ -93,3 +93,17 @@ export const Avatar: React.FC<{ letter: string; size?: number }> = ({ letter, si
         <Text variant="h3" color="accent">{letter}</Text>
     </View>
 );
+
+export interface Segment { key: string; share: number; color: string }
+
+/** One horizontal bar split into proportional segments (e.g. where your money goes). */
+export const StackedBar: React.FC<{ segments: Segment[]; label: string; height?: number }> = ({ segments, label, height = 16 }) => (
+    <View accessibilityRole="image" accessibilityLabel={label} style={{ flexDirection: 'row', height, borderRadius: radius.pill, overflow: 'hidden', backgroundColor: colors.surface, gap: 2 }}>
+        {segments.filter(s => s.share > 0).map(s => <View key={s.key} style={{ flex: s.share, backgroundColor: s.color }} />)}
+    </View>
+);
+
+/** Small color swatch used in legends. */
+export const Dot: React.FC<{ color: string; size?: number }> = ({ color, size = 10 }) => (
+    <View style={{ width: size, height: size, borderRadius: radius.pill, backgroundColor: color }} />
+);

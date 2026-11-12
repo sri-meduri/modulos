@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View } from 'react-native';
-import Svg, { Line, Path } from 'react-native-svg';
+import Svg, { Line, Path, Rect } from 'react-native-svg';
 import { colors } from '../../theme';
 import { Inline } from './Layout';
 import { Text } from './Text';
@@ -86,3 +86,32 @@ export const Legend: React.FC<{ items: { label: string; color: string; dashed?: 
         ))}
     </Inline>
 );
+
+/** Grouped bars: each group has one value per series (e.g. planned vs actual by month). */
+export const BarChart: React.FC<{ groups: { label: string; values: number[] }[]; colors: string[]; height?: number; label: string }> = ({ groups, colors: barColors, height = 150, label }) => {
+    const [width, setWidth] = useState(0);
+    const max = Math.max(1, ...groups.flatMap(g => g.values));
+    const innerH = height - PAD.top - PAD.bottom;
+    const slot = width > 0 ? (width - PAD.side * 2) / Math.max(1, groups.length) : 0;
+    const seriesCount = Math.max(1, barColors.length);
+    const barW = Math.max(4, Math.min(22, (slot * 0.7) / seriesCount));
+    return (
+        <View accessibilityRole="image" accessibilityLabel={label} style={{ gap: 4 }}>
+            <View onLayout={e => setWidth(e.nativeEvent.layout.width)} style={{ height }}>
+                {width > 0 ? (
+                    <Svg width={width} height={height}>
+                        {[0.5, 1].map(f => <Line key={f} x1={0} x2={width} y1={PAD.top + innerH * (1 - f)} y2={PAD.top + innerH * (1 - f)} stroke={colors.border} strokeWidth={1} />)}
+                        {groups.map((g, gi) => g.values.map((v, si) => {
+                            const h = (v / max) * innerH;
+                            const x = PAD.side + gi * slot + (slot - barW * seriesCount) / 2 + si * barW;
+                            return <Rect key={`${gi}-${si}`} x={x} y={PAD.top + innerH - h} width={barW - 2} height={Math.max(0, h)} rx={3} fill={barColors[si] ?? colors.accent} />;
+                        }))}
+                    </Svg>
+                ) : null}
+            </View>
+            <View style={{ flexDirection: 'row' }}>
+                {groups.map(g => <View key={g.label} style={{ flex: 1, alignItems: 'center' }}><Text variant="caption" color="textMuted">{g.label}</Text></View>)}
+            </View>
+        </View>
+    );
+};

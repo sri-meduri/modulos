@@ -139,18 +139,67 @@ export function summarizeProgress(finances: Finances): ProgressSummary {
 export interface Milestone {
     id: string;
     label: string;
+    detail: string;
     done: boolean;
+    /** 0-1 progress toward unlocking it (1 when done). */
+    progress: number;
+    /** Short progress caption, e.g. "42% of 50%". */
+    caption: string;
 }
 
+/** Milestones with progress toward each, in the order they are usually reached. */
 export function milestonesFor(finances: Finances, progress: ProgressSummary): Milestone[] {
     const payments = finances.payments ?? [];
+    const extraPaid = payments.some(p => (p.extra ?? 0) > 0);
+    const paidLoans = finances.loans.filter(l => l.status === 'paid_off').length;
+    const open = finances.loans.filter(l => (l.status ?? 'active') === 'active' && l.balance > 0.005);
+    // Closest debt to being paid off, by share already repaid.
+    const nearest = open.reduce((best, l) => Math.max(best, 1 - l.balance / Math.max(l.originalAmount, l.balance, 1)), 0);
+    // Compare on whole percents so what the screen shows ("10%") always agrees with "done".
+    const shown = Math.round(progress.percent * 100);
+    const pctMilestone = (id: string, label: string, target: number): Milestone => ({
+        id, label, detail: `${Math.round(target * 100)}% of your starting debt repaid`,
+        done: shown >= Math.round(target * 100), progress: Math.min(1, shown / Math.round(target * 100)),
+        caption: `${shown}% of ${Math.round(target * 100)}%`,
+    });
+    const flag = (id: string, label: string, detail: string, done: boolean, progressNow = 0): Milestone => ({
+        id, label, detail, done, progress: done ? 1 : progressNow, caption: done ? 'Done' : 'Not yet',
+    });
     return [
-        { id: 'first-payment', label: 'First payment logged', done: payments.length > 0 },
-        { id: 'first-extra', label: 'First extra payment', done: payments.some(p => (p.extra ?? 0) > 0) },
-        { id: 'p10', label: '10% paid off', done: progress.percent >= 0.1 },
-        { id: 'p25', label: 'A quarter paid off', done: progress.percent >= 0.25 },
-        { id: 'first-debt', label: 'First debt paid off', done: finances.loans.some(l => l.status === 'paid_off') },
-        { id: 'p50', label: 'Halfway there', done: progress.percent >= 0.5 },
-        { id: 'p100', label: 'Debt-free', done: progress.startingTotal > 0 && progress.percent >= 0.999 },
+        flag('first-payment', 'First payment logged', 'Log or auto-detect your first payment', payments.length > 0),
+        flag('first-extra', 'First extra payment', 'Pay more than the minimum once', extraPaid),
+        pctMilestone('p10', '10% paid off', 0.1),
+        pctMilestone('p25', 'A quarter paid off', 0.25),
+        { ...flag('first-debt', 'First debt paid off', 'Clear one debt completely', paidLoans > 0, nearest), caption: paidLoans > 0 ? 'Done' : `${Math.round(nearest * 100)}% of your closest debt` },
+        pctMilestone('p50', 'Halfway there', 0.5),
+        pctMilestone('p75', 'Three quarters done', 0.75),
+        { ...pctMilestone('p100', 'Debt-free', 1), done: progress.startingTotal > 0 && progress.percent >= 0.999 },
     ];
+}
+
+export interface MonthPlan {
+    /** 'YYYY-MM' */
+    month: string;
+    label: string;
+    planned: number;
+    actual: number;
+}
+
+/**
+ * Plan vs actual: what the plan calls for each month (all minimums plus the extra)
+ * against what was really paid, for the last `months` months including this one.
+ */
+export function planVsActual(finances: Finances, plannedMonthly: number, months = 6, now: Date = new Date()): MonthPlan[] {
+    const out: MonthPlan[] = [];
+    for (let i = months - 1; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        out.push({
+            month: key,
+            label: d.toLocaleDateString('en-US', { month: 'short' }),
+            planned: plannedMonthly,
+            actual: (finances.payments ?? []).filter(p => p.date.startsWith(key)).reduce((a, p) => a + p.amount, 0),
+        });
+    }
+    return out;
 }

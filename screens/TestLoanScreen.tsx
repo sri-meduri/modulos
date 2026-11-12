@@ -5,7 +5,7 @@ import { Loan, LoanType, RiskProfile } from '../types';
 import { evaluateNewLoan, RISK_LABELS, Verdict } from '../services/loanTest';
 import { formatMonthYear, addMonths } from '../services/payoff';
 import { money, pct, toNumber } from '../lib/format';
-import { Badge, Button, Card, Field, Gauge, Grid, Icon, Inline, PageTitle, Row, Screen, SegTabs, Stack, Text } from '../components/ui';
+import { Badge, Button, Card, Chip, Field, Gauge, Grid, Icon, Inline, PageTitle, Row, Screen, SegTabs, Stack, Text } from '../components/ui';
 
 const VERDICT: Record<Verdict, { tone: 'accent' | 'amber' | 'risk'; badge: 'mint' | 'amber' | 'red' }> = {
     'Safe': { tone: 'accent', badge: 'mint' },
@@ -19,15 +19,18 @@ const TestLoanScreen: React.FC = () => {
     const [amount, setAmount] = useState('18000');
     const [apr, setApr] = useState('6.9');
     const [months, setMonths] = useState('60');
+    const [type, setType] = useState<LoanType>(LoanType.Other);
+    const [name, setName] = useState('');
+    const [payOverride, setPayOverride] = useState('');
 
     const result = useMemo(() => evaluateNewLoan(
-        { amount: toNumber(amount), apr: toNumber(apr), termMonths: Math.max(1, Math.round(toNumber(months))) },
+        { amount: toNumber(amount), apr: toNumber(apr), termMonths: Math.max(1, Math.round(toNumber(months))), paymentOverride: payOverride === '' ? undefined : toNumber(payOverride) },
         {
             loans: activeLoans, netIncome: finances.monthlyNetIncome, grossIncome: finances.monthlyGrossIncome,
             expensesTotal: monthlyExpensesTotal, riskProfile: settings.riskProfile, strategy: settings.strategy ?? 'avalanche',
             customOrder: settings.customOrder, extra: settings.extraPayment ?? 0,
         }
-    ), [amount, apr, months, activeLoans, finances.monthlyNetIncome, finances.monthlyGrossIncome, monthlyExpensesTotal, settings]);
+    ), [amount, apr, months, payOverride, activeLoans, finances.monthlyNetIncome, finances.monthlyGrossIncome, monthlyExpensesTotal, settings]);
 
     const verdict = VERDICT[result.verdict];
     const valid = toNumber(amount) > 0;
@@ -37,8 +40,9 @@ const TestLoanScreen: React.FC = () => {
     const addLoan = (status: 'considering' | 'active') => {
         const amt = toNumber(amount);
         const loan: Loan = {
-            id: `debt-${Date.now()}`, name: status === 'considering' ? 'New loan (what-if)' : 'New loan', type: LoanType.Other,
+            id: `debt-${Date.now()}`, name: name.trim() || (status === 'considering' ? `New ${type === LoanType.Other ? 'loan' : type.toLowerCase()} (what-if)` : `New ${type === LoanType.Other ? 'loan' : type.toLowerCase()}`), type,
             balance: amt, originalAmount: amt, apr: toNumber(apr), term: Math.max(1, Math.round(toNumber(months))) / 12, status,
+            ...(payOverride !== '' ? { minPaymentOverride: toNumber(payOverride) } : {}),
         };
         setFinances(prev => ({ ...prev, loans: [...prev.loans, loan] }));
         router.push(status === 'considering' ? '/plan' : '/debts');
@@ -57,9 +61,19 @@ const TestLoanScreen: React.FC = () => {
                         <Field label="Months" keyboardType="number-pad" value={months} onChange={setMonths} />
                     </Inline>
                     <Stack gap="sm">
+                        <Text variant="label" color="textMuted">Loan type</Text>
+                        <Inline wrap gap="sm">
+                            {([LoanType.CreditCard, LoanType.Auto, LoanType.Student, LoanType.Mortgage, LoanType.Other]).map(t => <Chip key={t} active={type === t} onPress={() => setType(t)}>{t}</Chip>)}
+                        </Inline>
+                    </Stack>
+                    <Inline align="flex-start">
+                        <Field label="Name (optional)" value={name} onChange={setName} placeholder="e.g. Honda Civic" />
+                        <Field label="Payment (optional)" prefix="$" numeric value={payOverride} onChange={setPayOverride} placeholder={String(Math.round(result.payment))} hint="From a lender quote" />
+                    </Inline>
+                    <Stack gap="sm">
                         <Text variant="label" color="textMuted">Risk profile</Text>
                         <SegTabs label="Risk profile" value={settings.riskProfile}
-                            options={[RiskProfile.Low, RiskProfile.Average, RiskProfile.High].map(v => ({ value: v, label: RISK_LABELS[v].label }))}
+                            options={[RiskProfile.Low, RiskProfile.Average, RiskProfile.High].map(v => ({ value: v, label: `${RISK_LABELS[v].label} · ${RISK_LABELS[v].percent}` }))}
                             onChange={v => setSettings(p => ({ ...p, riskProfile: v }))} />
                         <Text variant="caption" color="textMuted">{RISK_LABELS[settings.riskProfile].blurb}</Text>
                     </Stack>
@@ -72,14 +86,19 @@ const TestLoanScreen: React.FC = () => {
                             <Text variant="label" color="textMuted">Verdict</Text>
                             <Badge tone={verdict.badge} solid>{result.verdict}</Badge>
                         </Inline>
-                        <Row label={<Text variant="small">DTI today → with loan</Text>} value={<Text variant="bodyStrong">{pct(result.dtiBefore)} → {pct(result.dtiAfter)}</Text>} />
+                        <Inline gap="md" align="stretch">
+                            <Card pad="compact" gap="xs" style={{ flex: 1 }}><Text variant="caption" color="textMuted">DTI now</Text><Text variant="stat">{pct(result.dtiBefore)}</Text></Card>
+                            <Card pad="compact" gap="xs" style={{ flex: 1 }} accent><Text variant="caption" color="textMuted">DTI after this loan</Text><Text variant="stat" color={verdict.tone === 'accent' ? 'accent' : verdict.tone}>{pct(result.dtiAfter)}</Text></Card>
+                        </Inline>
                         <Gauge value={result.dtiAfter} before={result.dtiBefore} limit={result.threshold} tone={verdict.tone} label="Debt-to-income with the new loan" />
                         <Stack gap="xs">{result.reasons.map(r => <Text key={r} variant="small">{r}</Text>)}</Stack>
                         {result.incomeApproximated && !noIncome ? <Text variant="caption" color="textMuted">DTI uses take-home pay because gross income isn’t set, so it reads a little high.</Text> : null}
                     </Card>
 
                     <Card gap="sm">
-                        <Row label="New payment" value={<Text variant="bodyStrong">{money(result.payment)}</Text>} />
+                        <Row label="Total debt" value={<Text variant="bodyStrong">{money(result.totalDebtBefore)} → {money(result.totalDebtAfter)}</Text>} />
+                        <Row label="New payment" value={<Text variant="bodyStrong">{money(result.payment)}/mo</Text>} />
+                        {result.negativeAmortization ? <Text variant="caption" color="amber">This payment doesn’t cover each month’s interest, so the balance would grow.</Text> : null}
                         <Row label="Left over each month" value={<Text variant="bodyStrong" color={result.leftoverAfter < 0 ? 'risk' : 'text'}>{money(result.leftoverBefore)} → {money(result.leftoverAfter)}</Text>} />
                         <Row label="Debt-free date" value={<Text variant="bodyStrong">{result.neverPaysOffAfter ? 'Not within 50 years' : `${dateOf(result.debtFreeMonthsBefore)} → ${dateOf(result.debtFreeMonthsAfter)}`}</Text>} />
                         <Row label="If pay dropped 10%" value={<Text variant="bodyStrong" color={result.stressLeftover < 0 ? 'risk' : 'text'}>{money(result.stressLeftover)} left</Text>} />

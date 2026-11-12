@@ -9,6 +9,8 @@ export interface LoanTestInput {
     amount: number;
     apr: number;
     termMonths: number;
+    /** Overrides the calculated payment (e.g. from a lender quote). */
+    paymentOverride?: number;
 }
 
 export interface FinanceSnapshot {
@@ -26,6 +28,10 @@ export interface FinanceSnapshot {
 export interface LoanTestResult {
     verdict: Verdict;
     payment: number;
+    /** True when the payment does not even cover each month's interest (the balance would grow). */
+    negativeAmortization: boolean;
+    totalDebtBefore: number;
+    totalDebtAfter: number;
     /** 0-1 fractions. */
     dtiBefore: number;
     dtiAfter: number;
@@ -50,16 +56,18 @@ const monthlyMin = (loans: Loan[]) =>
 
 const money = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
 
-export const RISK_LABELS: Record<RiskProfile, { label: string; blurb: string }> = {
-    [RiskProfile.Low]: { label: 'Cautious', blurb: 'Cautious flags a loan above 30% debt-to-income.' },
-    [RiskProfile.Average]: { label: 'Balanced', blurb: 'Balanced flags a loan above 36% debt-to-income.' },
-    [RiskProfile.High]: { label: 'Flexible', blurb: 'Flexible flags a loan above 40% debt-to-income.' },
+/** Risk profiles with the DTI limit each one uses, shown in the UI as "Cautious · 30%". */
+export const RISK_LABELS: Record<RiskProfile, { label: string; percent: string; blurb: string }> = {
+    [RiskProfile.Low]: { label: 'Cautious', percent: '30%', blurb: 'Cautious flags a loan above 30% debt-to-income.' },
+    [RiskProfile.Average]: { label: 'Balanced', percent: '36%', blurb: 'Balanced flags a loan above 36% debt-to-income.' },
+    [RiskProfile.High]: { label: 'Flexible', percent: '40%', blurb: 'Flexible flags a loan above 40% debt-to-income (higher risk).' },
 };
 
 /** Core affordability check. Pure so it can also drive the "make it safer" search. */
 export const evaluateNewLoan = (input: LoanTestInput, snap: FinanceSnapshot, withSuggestions = true): LoanTestResult => {
     const years = input.termMonths / 12;
-    const payment = calculateMinimumPayment(input.amount, input.apr, years);
+    const payment = input.paymentOverride !== undefined ? input.paymentOverride : calculateMinimumPayment(input.amount, input.apr, years);
+    const negativeAmortization = payment < (input.amount * input.apr) / 1200 - 0.005;
     const incomeApproximated = snap.grossIncome <= 0;
     const dtiIncome = incomeApproximated ? snap.netIncome : snap.grossIncome;
     const threshold = DTI_THRESHOLDS[snap.riskProfile];
@@ -103,7 +111,7 @@ export const evaluateNewLoan = (input: LoanTestInput, snap: FinanceSnapshot, wit
         let hi = input.amount;
         for (let i = 0; i < 20; i++) {
             const mid = (lo + hi) / 2;
-            const r = evaluateNewLoan({ ...input, amount: mid }, snap, false);
+            const r = evaluateNewLoan({ ...input, amount: mid, paymentOverride: undefined }, snap, false);
             if (r.verdict === 'Safe') lo = mid;
             else hi = mid;
         }
@@ -111,7 +119,7 @@ export const evaluateNewLoan = (input: LoanTestInput, snap: FinanceSnapshot, wit
         // Shortest longer term that would be Safe.
         for (const term of [36, 48, 60, 72, 84, 96]) {
             if (term <= input.termMonths) continue;
-            if (evaluateNewLoan({ ...input, termMonths: term }, snap, false).verdict === 'Safe') {
+            if (evaluateNewLoan({ ...input, termMonths: term, paymentOverride: undefined }, snap, false).verdict === 'Safe') {
                 suggestions.push(`Stretch the term to ${term} months (a longer term costs more interest overall).`);
                 break;
             }
@@ -120,7 +128,7 @@ export const evaluateNewLoan = (input: LoanTestInput, snap: FinanceSnapshot, wit
     }
 
     return {
-        verdict, payment, dtiBefore, dtiAfter, threshold, leftoverBefore, leftoverAfter, stressLeftover,
+        verdict, payment, negativeAmortization, totalDebtBefore: snap.loans.reduce((a, l) => a + l.balance, 0), totalDebtAfter: snap.loans.reduce((a, l) => a + l.balance, 0) + input.amount, dtiBefore, dtiAfter, threshold, leftoverBefore, leftoverAfter, stressLeftover,
         debtFreeMonthsBefore: before.months, debtFreeMonthsAfter: after.months,
         neverPaysOffAfter: after.neverPaysOff, reasons, suggestions, incomeApproximated,
     };

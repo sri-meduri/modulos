@@ -7,6 +7,7 @@ import { usePlan } from '../hooks/usePlan';
 import { useBanks } from '../hooks/useBanks';
 import { simulatePayoff, payoffLabel, formatDuration } from '../services/payoff';
 import { missedPayments, summarizeProgress } from '../services/payments';
+import { nextBestAction } from '../services/nextAction';
 import { money, pct } from '../lib/format';
 import { useCountUp } from '../hooks/useCountUp';
 import { Button, Card, Gauge, Grid, Icon, Inline, PageTitle, Ring, Row, Screen, Stack, Text, TextButton } from '../components/ui';
@@ -34,6 +35,26 @@ const OverviewScreen: React.FC = () => {
         if (plan.plan.neverPaysOff || months < 1 || interest < 1) return null;
         return `An extra $100 a month gets you debt-free about ${formatDuration(months)} sooner and saves roughly ${money(interest)} in interest.`;
     }, [activeLoans, plan]);
+
+    // Old dashboard's "projected savings": what putting ALL available money toward debt would do.
+    const allIn = useMemo(() => {
+        if (activeLoans.length === 0 || monthlyLeftoverMoney < 25) return null;
+        const r = simulatePayoff(activeLoans, Math.floor(monthlyLeftoverMoney), plan.strategy, plan.customOrder);
+        const saved = plan.baseline.totalInterest - r.totalInterest;
+        if (r.neverPaysOff || saved < 1) return null;
+        return `Using all ${money(monthlyLeftoverMoney)} available each month: debt-free by ${payoffLabel(r)} and about ${money(saved)} less interest than minimums only.`;
+    }, [activeLoans, monthlyLeftoverMoney, plan]);
+
+    const action = useMemo(() => nextBestAction({
+        finances, settings, activeLoans, leftover: monthlyLeftoverMoney, dti: debtToIncomeRatio,
+        unconfirmedPayments: (finances.payments ?? []).filter(p => p.source === 'detected' && !p.confirmed).length,
+        paymentCandidates: paymentCandidates.length, hasBank: banks.length > 0,
+    }), [finances, settings, activeLoans, monthlyLeftoverMoney, debtToIncomeRatio, paymentCandidates.length, banks.length]);
+
+    const runAction = () => {
+        if (action.applyExtra !== undefined) setSettings(p => ({ ...p, extraPayment: action.applyExtra }));
+        else if (action.route) router.push(action.route as never);
+    };
 
     const animatedDebt = useCountUp(totalDebt);
     const showNudge = loaded && !isSample && banks.length === 0 && !settings.bankNudgeDismissed;
@@ -67,6 +88,18 @@ const OverviewScreen: React.FC = () => {
                 </Card>
             ) : null}
 
+            <Card tone={action.tone === 'accent' ? 'mint' : action.tone === 'amber' ? 'amber' : 'default'} accent={action.tone === 'risk'} gap="md">
+                <Inline align="flex-start" gap="md">
+                    <Icon name="target" color={action.tone === 'accent' ? 'accent' : action.tone === 'amber' ? 'amber' : 'risk'} />
+                    <Stack gap="xs" style={{ flex: 1 }}>
+                        <Text variant="captionStrong" color="textMuted">NEXT BEST ACTION</Text>
+                        <Text variant="h3">{action.title}</Text>
+                        <Text variant="small" color="textMuted">{action.detail}</Text>
+                    </Stack>
+                </Inline>
+                <Button compact onPress={runAction}>{action.cta}</Button>
+            </Card>
+
             <Grid min={340}>
                 <Stack gap="lg">
                     <Card gap="lg" pad="roomy">
@@ -79,6 +112,7 @@ const OverviewScreen: React.FC = () => {
                             <Ring value={progress.percent} label={`${Math.round(progress.percent * 100)} percent paid off`} />
                         </Inline>
                         <Row label={<Text variant="small" color="textMuted">Total debt</Text>} value={<Text variant="bodyStrong">{money(animatedDebt)}</Text>} />
+                        <Row label={<Text variant="small" color="textMuted">Paid so far</Text>} value={<Text variant="bodyStrong" color="accent">{`${money(progress.paidOff)} of ${money(progress.startingTotal)}`}</Text>} />
                     </Card>
 
                     <Inline gap="md" align="stretch">
@@ -86,6 +120,9 @@ const OverviewScreen: React.FC = () => {
                         <Kpi label="DTI" value={pct(debtToIncomeRatio)} tone={dtiTone === 'accent' ? 'text' : dtiTone} />
                         <Kpi label="Left over" value={money(monthlyLeftoverMoney)} tone={monthlyLeftoverMoney < 0 ? 'risk' : 'text'} />
                     </Inline>
+                    {monthlyLeftoverMoney < 0 ? <Text variant="small" color="risk">Your bills and minimums exceed your income by {money(-monthlyLeftoverMoney)} a month.</Text> : null}
+                    {debtToIncomeRatio > threshold ? <Text variant="small" color="risk">Your debt-to-income ratio is above the {pct(threshold)} limit for your risk profile.</Text> : null}
+                    {finances.monthlyGrossIncome <= 0 && finances.monthlyNetIncome > 0 ? <Text variant="caption" color="textMuted">DTI uses take-home pay because gross income isn’t set, so it reads a little high. Add gross income in Budget for a standard DTI.</Text> : null}
                     <Card>
                         <Gauge value={debtToIncomeRatio} limit={threshold} tone={dtiTone} label="Debt-to-income ratio against your limit" />
                     </Card>
@@ -98,6 +135,7 @@ const OverviewScreen: React.FC = () => {
                     </Card>
 
                     {insight ? <Card tone="amber"><Text variant="small"><Text variant="smallStrong" color="amber">Insight · </Text>{insight}</Text></Card> : null}
+                    {allIn ? <Card tone="amber"><Text variant="small"><Text variant="smallStrong" color="amber">Projected savings · </Text>{allIn}</Text></Card> : null}
 
                     {(totalAssets > 0 || (finances.assets ?? []).length > 0) ? (
                         <Card>

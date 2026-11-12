@@ -13,13 +13,13 @@ A web application to help you manage your finances and create a debt payoff plan
 
 ## What's in the app
 
-- **Overview**: debt-free date, progress ring, minimums / DTI / leftover, balance-over-time chart, an insight, net worth.
-- **Debts**: every debt with Active / Considering / Paid off, loan-type presets, import from bank, and **Test a new loan** (Safe / Borderline / Not Recommended, DTI gauge before and after, impact on leftover and debt-free date, "what would make this safer?").
-- **Plan**: Avalanche, Snowball or Custom order, an extra-payment slider with quick picks, before/after chart, payoff order, target date, and what-ifs (considering loans, refinance).
-- **Budget**: take-home pay, one fixed-expenses number, optional category breakdown, assets.
-- **Progress**: log payments, bank-detected payments, milestones, balance history.
-- **Profile**: account, linked accounts (connect, reconnect, disconnect and delete imported data), data and privacy.
-- **Onboarding**: connect a bank or enter income and a first debt; guests and the sample profile are supported.
+- **Overview**: debt-free date with progress ring and total paid so far, **next best action**, minimums / DTI / leftover with warnings, balance history + projection, "extra $100" and "use everything available" insights, net worth.
+- **Debts**: every debt with Active / Considering / Paid off, loan-type presets, import from bank, and **Test a new loan**: name and type, optional lender payment, risk profile with its percentage, DTI now vs after, total debt before and after, leftover and debt-free date impact, a 10% pay-cut stress test, negative-amortization warning, and "what would make this safer?".
+- **Plan**: Avalanche, Snowball or Custom order; extra payment with a **+/- stepper**, a slider from $0 to the **money available for debt payoff**, and a "use all available" option; **minimum + extra** (or by-debt) payment breakdown; before/after chart; payoff order; target date; what-ifs and refinance.
+- **Budget**: the full **tax calculator** (net or gross entry, filing status, ZIP with state and local tax, 401(k), IRA, itemized deductions) or plain take-home pay; one fixed-expenses number with the optional category breakdown; **where your money goes**; 12-month income vs bills chart; assets and net worth.
+- **Progress**: log payments or have your bank detect them, **plan vs actual** by month, and milestones with a "next up" card and progress toward each.
+- **Profile**: account, risk profile, linked accounts (connect, reconnect, disconnect and delete imported data), data and privacy, about.
+- **Onboarding**: connect a bank or enter income and a first debt; guest and sample profiles are supported.
 
 ## Run it
 

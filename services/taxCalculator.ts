@@ -422,3 +422,19 @@ export function computeMonthlyTakeHome(
 
     return { takeHome, stateCode, localInfo };
 }
+
+export function getLocalInfo(zip: string): { city: string; rate: number } | undefined {
+    if (zip.length < 3) return undefined;
+    return LOCAL_BY_PREFIX[zip.slice(0, 3)];
+}
+
+export function getStateName(code: string): string {
+    return STATES[code]?.name ?? code;
+}
+
+export function getStateStdDed(stateCode: string, filingRaw: string): number {
+    const filing: 'single' | 'married' = filingRaw === 'married' ? 'married' : 'single';
+    const sd = STATES[stateCode];
+    if (!sd) return FED_STD_DED[filing];
+    return filing === 'married' ? sd.sdM : sd.sdS;
+}

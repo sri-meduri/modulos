@@ -76,3 +76,21 @@ export const Select = <T extends string>({ label, value, options, onChange, plac
         </View>
     );
 };
+
+/** − / + stepper for a money amount: big touch targets, clamped to [min, max]. */
+export const Stepper: React.FC<{ value: number; step: number; min?: number; max?: number; onChange: (v: number) => void; label: string; format?: (v: number) => string }> = ({ value, step, min = 0, max = Number.MAX_SAFE_INTEGER, onChange, label, format }) => {
+    const set = (v: number) => onChange(Math.max(min, Math.min(max, v)));
+    const btn = (sign: 1 | -1, disabled: boolean) => (
+        <Pressable accessibilityRole="button" accessibilityLabel={`${sign > 0 ? 'Increase' : 'Decrease'} ${label} by ${step}`} disabled={disabled} onPress={() => set(value + sign * step)}
+            style={{ width: hit.control, height: hit.control, borderRadius: radius.pill, borderWidth: border.hairline, borderColor: colors.line, alignItems: 'center', justifyContent: 'center', opacity: disabled ? 0.4 : 1 }}>
+            <Icon name={sign > 0 ? 'plus' : 'minus'} size={20} />
+        </Pressable>
+    );
+    return (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+            {btn(-1, value <= min)}
+            <Text variant="hero" style={{ minWidth: 96, textAlign: 'center' }} accessibilityLabel={`${label}: ${format ? format(value) : value}`}>{format ? format(value) : String(value)}</Text>
+            {btn(1, value >= max)}
+        </View>
+    );
+};
