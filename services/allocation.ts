@@ -14,12 +14,15 @@ export interface Slice {
 const categoryOf = new Map<string, string>();
 for (const c of EXPENSE_CATEGORIES) for (const s of c.subcategories) categoryOf.set(s.name, c.label);
 
+/** Category an expense belongs to: the one it was saved with, else guessed from its name, else "Other". */
+export const expenseCategory = (e: Expense): string => e.category ?? categoryOf.get(e.id) ?? categoryOf.get(e.name) ?? 'Other';
+
 /** Groups expenses by category label (unknown / custom / bank bills go under "Other bills"). */
 export const groupBills = (expenses: Expense[]): { label: string; amount: number }[] => {
     const totals = new Map<string, number>();
     for (const e of expenses) {
         if (e.amount <= 0) continue;
-        const label = categoryOf.get(e.id) ?? categoryOf.get(e.name) ?? 'Other bills';
+        const label = expenseCategory(e);
         totals.set(label, (totals.get(label) ?? 0) + e.amount);
     }
     return [...totals.entries()].map(([label, amount]) => ({ label, amount })).sort((a, b) => b.amount - a.amount);

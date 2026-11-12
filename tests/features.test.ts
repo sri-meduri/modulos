@@ -24,9 +24,9 @@ describe('where your money goes', () => {
         { id: 'custom-1', name: 'Gym', amount: 50 },
         { id: 'zero', name: 'Nothing', amount: 0 },
     ];
-    it('groups bills by category and puts unknown ones under Other bills', () => {
+    it('groups bills by category and puts unknown ones under Other', () => {
         const g = groupBills(expenses);
-        expect(g.map(x => x.label)).toEqual(['Housing / Utilities', 'Food', 'Other bills']);
+        expect(g.map(x => x.label)).toEqual(['Housing / Utilities', 'Food', 'Other']);
     });
     it('splits income into bills, debt minimums, extra and what is left, summing to 100%', () => {
         const r = allocateIncome(5000, expenses, 400, 300);

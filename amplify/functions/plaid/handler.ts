@@ -56,6 +56,7 @@ type PlaidArgs = {
   institutionName?: string;
   itemId?: string;
   redirectUri?: string;
+  days?: number;
 };
 
 /**
@@ -382,6 +383,42 @@ async function disconnectItem(sub: string, args: PlaidArgs) {
   return { itemId: token.itemId, removed: true };
 }
 
+/**
+ * Recent transactions across the user's linked banks (default 60 days) for the
+ * Budget transactions list. Pending transactions are skipped; amount > 0 is money out.
+ */
+async function listTransactions(sub: string, args: PlaidArgs) {
+  const days = Math.min(Math.max(args.days ?? 60, 1), 180);
+  const tokens = await tokensForUser(sub);
+  const end = new Date();
+  const start = new Date(end.getTime() - days * 24 * 3600 * 1000);
+  const out: { id: string; date: string; name: string; amount: number; category: string; account: string }[] = [];
+  for (const token of tokens) {
+    try {
+      const accounts = await plaid.accountsGet({ access_token: token.accessToken });
+      const names = new Map(accounts.data.accounts.map((a) => [a.account_id, a.name]));
+      const txns = await fetchTransactions(token.accessToken, YYYY_MM_DD(start), YYYY_MM_DD(end));
+      for (const t of txns) {
+        if (t.pending) continue;
+        out.push({
+          id: t.transaction_id,
+          date: t.date,
+          name: t.merchant_name ?? t.name ?? 'Transaction',
+          amount: t.amount,
+          category: t.personal_finance_category?.primary ?? 'OTHER',
+          account: names.get(t.account_id) ?? '',
+        });
+      }
+    } catch (err: unknown) {
+      const code = (err as { response?: { data?: { error_code?: string } } })?.response?.data?.error_code;
+      // Expired logins and not-yet-ready data are normal: skip this bank.
+      if (!['ITEM_LOGIN_REQUIRED', 'PRODUCT_NOT_READY'].includes(code ?? '')) throw err;
+    }
+  }
+  out.sort((a, b) => b.date.localeCompare(a.date));
+  return { transactions: out.slice(0, 500) };
+}
+
 /** Surfaces Plaid's real error code/message instead of a bare axios 4xx. */
 const rethrowPlaidError = (err: unknown): never => {
   const data = (err as { response?: { data?: { error_code?: string; error_message?: string } } })
@@ -403,6 +440,8 @@ export const handler = async (event: PlaidEvent) => {
         return await exchangePublicToken(sub, callerOwner(event), event.arguments);
       case 'syncPlaidData':
         return await syncPlaidData(sub, event.arguments);
+      case 'listPlaidTransactions':
+        return await listTransactions(sub, event.arguments);
       case 'disconnectPlaidItem':
         return await disconnectItem(sub, event.arguments);
       default:

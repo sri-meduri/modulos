@@ -8,7 +8,7 @@ import { useBanks } from '../hooks/useBanks';
 import { simulatePayoff, payoffLabel, formatDuration } from '../services/payoff';
 import { missedPayments, summarizeProgress } from '../services/payments';
 import { nextBestAction } from '../services/nextAction';
-import { money, pct } from '../lib/format';
+import { compactMoney, money, pct } from '../lib/format';
 import { useCountUp } from '../hooks/useCountUp';
 import { Button, Card, Gauge, Grid, Icon, Inline, PageTitle, Ring, Row, Screen, Stack, Text, TextButton } from '../components/ui';
 import BalanceChart from '../components/BalanceChart';
@@ -33,7 +33,7 @@ const OverviewScreen: React.FC = () => {
         const months = plan.plan.months - bumped.months;
         const interest = plan.plan.totalInterest - bumped.totalInterest;
         if (plan.plan.neverPaysOff || months < 1 || interest < 1) return null;
-        return `An extra $100 a month gets you debt-free about ${formatDuration(months)} sooner and saves roughly ${money(interest)} in interest.`;
+        return `+$100/mo: ${formatDuration(months)} sooner, ${compactMoney(interest)} less interest.`;
     }, [activeLoans, plan]);
 
     // Old dashboard's "projected savings": what putting ALL available money toward debt would do.
@@ -42,7 +42,7 @@ const OverviewScreen: React.FC = () => {
         const r = simulatePayoff(activeLoans, Math.floor(monthlyLeftoverMoney), plan.strategy, plan.customOrder);
         const saved = plan.baseline.totalInterest - r.totalInterest;
         if (r.neverPaysOff || saved < 1) return null;
-        return `Using all ${money(monthlyLeftoverMoney)} available each month: debt-free by ${payoffLabel(r)} and about ${money(saved)} less interest than minimums only.`;
+        return `All ${money(monthlyLeftoverMoney)} available: debt-free ${payoffLabel(r)}, ${compactMoney(saved)} less interest.`;
     }, [activeLoans, monthlyLeftoverMoney, plan]);
 
     const action = useMemo(() => nextBestAction({
@@ -122,7 +122,6 @@ const OverviewScreen: React.FC = () => {
                     </Inline>
                     {monthlyLeftoverMoney < 0 ? <Text variant="small" color="risk">Your bills and minimums exceed your income by {money(-monthlyLeftoverMoney)} a month.</Text> : null}
                     {debtToIncomeRatio > threshold ? <Text variant="small" color="risk">Your debt-to-income ratio is above the {pct(threshold)} limit for your risk profile.</Text> : null}
-                    {finances.monthlyGrossIncome <= 0 && finances.monthlyNetIncome > 0 ? <Text variant="caption" color="textMuted">DTI uses take-home pay because gross income isn’t set, so it reads a little high. Add gross income in Budget for a standard DTI.</Text> : null}
                     <Card>
                         <Gauge value={debtToIncomeRatio} limit={threshold} tone={dtiTone} label="Debt-to-income ratio against your limit" />
                     </Card>
@@ -134,8 +133,8 @@ const OverviewScreen: React.FC = () => {
                         <BalanceChart history={finances.balanceHistory} projection={plan.plan.balanceSeries} currentBalance={totalDebt} />
                     </Card>
 
-                    {insight ? <Card tone="amber"><Text variant="small"><Text variant="smallStrong" color="amber">Insight · </Text>{insight}</Text></Card> : null}
-                    {allIn ? <Card tone="amber"><Text variant="small"><Text variant="smallStrong" color="amber">Projected savings · </Text>{allIn}</Text></Card> : null}
+                    {insight ? <Card tone="amber"><Text variant="small"><Text variant="smallStrong" color="amber">Faster · </Text>{insight}</Text></Card> : null}
+                    {allIn ? <Card tone="amber"><Text variant="small"><Text variant="smallStrong" color="amber">All in · </Text>{allIn}</Text></Card> : null}
 
                     {(totalAssets > 0 || (finances.assets ?? []).length > 0) ? (
                         <Card>

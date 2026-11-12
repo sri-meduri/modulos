@@ -15,6 +15,7 @@ export const NAV: { path: string; label: string; icon: IconName }[] = [
     { path: '/debts', label: 'Debts', icon: 'debts' },
     { path: '/plan', label: 'Plan', icon: 'plan' },
     { path: '/budget', label: 'Budget', icon: 'budget' },
+    { path: '/assets', label: 'Assets', icon: 'assets' },
     { path: '/progress', label: 'Progress', icon: 'progress' },
 ];
 
@@ -65,8 +66,8 @@ export const SampleBanner: React.FC = () => {
     const { startWithOwnData, openAuth } = useAuth();
     return (
         <Card tone="mint">
-            <Text variant="small"><Text variant="smallStrong" color="accent">Sample data. </Text>This is an example household. Replace it with yours.</Text>
-            <Inline gap="lg"><TextButton onPress={startWithOwnData}>Use my own data</TextButton><TextButton color="textMuted" onPress={() => openAuth('signup')}>Sign up</TextButton></Inline>
+            <Text variant="small"><Text variant="smallStrong" color="accent">Sample data. </Text>This is an example household. Clear it to start with your own.</Text>
+            <Inline gap="lg"><TextButton onPress={startWithOwnData}>Clear sample data</TextButton><TextButton color="textMuted" onPress={() => openAuth('signup')}>Sign up</TextButton></Inline>
         </Card>
     );
 };

@@ -10,6 +10,8 @@ import { STANDARD_EXPENSES } from '../constants';
 import { createSampleFinances, createSampleSettings } from '../services/sampleData';
 import ImportGuestDataModal from '../components/ImportGuestDataModal';
 import { storage } from '../lib/storage';
+import { effectiveGrossIncome } from '../services/income';
+import { recordAssetSnapshot } from '../services/assets';
 
 interface FinanceContextType {
     finances: Finances;
@@ -28,6 +30,10 @@ interface FinanceContextType {
     monthlyExpensesTotal: number;
     monthlyLeftoverMoney: number;
     debtToIncomeRatio: number;
+    /** Gross monthly income used for DTI: entered, or estimated from take-home pay. */
+    grossIncomeForDti: number;
+    /** True when any data came from a linked bank (unlocks history, transactions and plan-vs-actual). */
+    bankLinked: boolean;
     loading: boolean;
     deleteAllData: () => Promise<void>;
     /** Bank transactions that look like debt payments but matched no debt. */
@@ -66,7 +72,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         isSample ? createSampleSettings() : { riskProfile: RiskProfile.Average, strategy: 'avalanche' as const, extraPayment: 0 }
     ), [isSample]);
 
-    const [finances, setFinances, financesLoading, deleteRemoteFinances] = useAmplifyStorage<Finances>('finances', initialFinances, 'Finances', ['expenses', 'loans', 'assets', 'payments', 'incomeExpenseHistory', 'balanceHistory']);
+    const [finances, setFinances, financesLoading, deleteRemoteFinances] = useAmplifyStorage<Finances>('finances', initialFinances, 'Finances', ['expenses', 'loans', 'assets', 'payments', 'incomeExpenseHistory', 'balanceHistory', 'assetHistory']);
     const [settings, setSettings, settingsLoading, deleteRemoteSettings] = useAmplifyStorage<Settings>('settings', initialSettings, 'Settings', ['customOrder', 'payeeRules', 'ignoredCandidates']);
 
     // Guest data is never silently discarded on sign-in: if guest_finances/guest_settings
@@ -205,7 +211,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
     }, [finances.loans]);
 
-    const { activeLoans, consideringLoans, paidOffLoans, monthlyDebtPayments, totalDebt, totalAssets, netWorth, monthlyExpensesTotal, monthlyLeftoverMoney, debtToIncomeRatio } = useMemo(() => {
+    const { activeLoans, consideringLoans, paidOffLoans, monthlyDebtPayments, totalDebt, totalAssets, netWorth, monthlyExpensesTotal, monthlyLeftoverMoney, debtToIncomeRatio, grossIncomeForDti } = useMemo(() => {
         const activeLoans = finances.loans.filter(isActiveLoan);
         const totalDebt = activeLoans.reduce((acc, loan) => acc + loan.balance, 0);
         
@@ -217,10 +223,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         
         const monthlyLeftoverMoney = finances.monthlyNetIncome - monthlyExpensesTotal - monthlyDebtPayments;
 
-        const incomeForDti = finances.monthlyGrossIncome > 0 ? finances.monthlyGrossIncome : finances.monthlyNetIncome;
-        const debtToIncomeRatio = incomeForDti > 0 
-            ? (monthlyDebtPayments / incomeForDti) 
-            : 0;
+        const grossIncomeForDti = effectiveGrossIncome(finances);
+        const debtToIncomeRatio = grossIncomeForDti > 0 ? monthlyDebtPayments / grossIncomeForDti : 0;
 
         return {
             activeLoans,
@@ -233,26 +237,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             monthlyExpensesTotal,
             monthlyLeftoverMoney,
             debtToIncomeRatio,
+            grossIncomeForDti,
         };
     }, [finances]);
 
     const loading = financesLoading || settingsLoading;
 
-    // Record a rolling 12-month history of take-home pay vs. bills; the current month is
-    // upserted as the totals change, so the Budget history chart fills in over time.
+    // Month-end snapshots of bank-linked asset balances (retirement performance on the Assets tab).
     useEffect(() => {
         if (loading) return;
-        const income = finances.monthlyNetIncome;
-        const expenses = monthlyExpensesTotal;
-        if (income === 0 && expenses === 0) return; // don't record a pristine month
-        const monthKey = new Date().toISOString().slice(0, 7);
-        setFinances(prev => {
-            const history = prev.incomeExpenseHistory ?? [];
-            const existing = history.find(h => h.month === monthKey);
-            if (existing && existing.income === income && existing.expenses === expenses) return prev;
-            return { ...prev, incomeExpenseHistory: [...history.filter(h => h.month !== monthKey), { month: monthKey, income, expenses }].sort((a, b) => a.month.localeCompare(b.month)).slice(-12) };
-        });
-    }, [finances.monthlyNetIncome, monthlyExpensesTotal, loading, setFinances]);
+        setFinances(prev => recordAssetSnapshot(prev));
+    }, [finances.assets, loading, setFinances]);
+
+    const bankLinked = useMemo(
+        () => finances.loans.some(l => l.plaidItemId) || finances.expenses.some(e => e.plaidItemId) || (finances.assets ?? []).some(a => a.plaidItemId) || (finances.incomeExpenseHistory ?? []).length > 0,
+        [finances]
+    );
 
     // Record total active debt per month so the Overview/Progress charts show
     // real history (the current month is upserted as balances change).
@@ -289,6 +289,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         monthlyExpensesTotal,
         monthlyLeftoverMoney,
         debtToIncomeRatio,
+        grossIncomeForDti,
+        bankLinked,
         loading,
         deleteAllData,
         paymentCandidates,

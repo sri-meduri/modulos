@@ -92,6 +92,7 @@ const DebtSheet: React.FC<Props> = ({ open, onClose, loan, onSave, onDelete }) =
                 <Field label="APR" suffix="%" numeric value={d.apr} onChange={v => { setTouchedApr(true); set('apr')(v); }} hint={loan ? undefined : LOAN_PRESETS[d.type].hint} />
                 <Field label="Minimum payment" prefix="$" numeric value={d.minPayment} onChange={set('minPayment')} placeholder={calcMin > 0 ? String(Math.round(calcMin)) : '0'} hint={d.minPayment === '' && calcMin > 0 ? `Estimated ${money(calcMin)}/mo` : undefined} />
             </Inline>
+            {d.type === LoanType.Mortgage ? <Inline><Field label="Monthly property tax (optional)" prefix="$" numeric value={d.propertyTax} onChange={set('propertyTax')} hint="Only for homeowners. Counted as a monthly expense, not a payment on this loan." /></Inline> : null}
             {d.type === LoanType.CreditCard && d.minPayment === '' ? <Text variant="caption" color="amber">Cards have no fixed term. Enter the minimum from your statement for accurate results.</Text> : null}
             <TextButton onPress={() => setMore(m => !m)}>{more ? 'Fewer details' : 'More details (term, due date)'}</TextButton>
             {more ? (
@@ -100,7 +101,6 @@ const DebtSheet: React.FC<Props> = ({ open, onClose, loan, onSave, onDelete }) =
                         <Field label="Term (years)" numeric value={d.termYears} onChange={set('termYears')} />
                         <Field label="Due day of month" keyboardType="number-pad" value={d.dueDay} onChange={set('dueDay')} placeholder="e.g. 15" />
                     </Inline>
-                    {d.type === LoanType.Mortgage ? <Inline><Field label="Monthly property tax" prefix="$" numeric value={d.propertyTax} onChange={set('propertyTax')} hint="Counted as a bill, not a payment on this loan." /></Inline> : null}
                 </>
             ) : null}
             <Button size="lg" disabled={balance <= 0} onPress={save}>{loan ? 'Save changes' : 'Add debt'}</Button>

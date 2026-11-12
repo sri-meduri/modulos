@@ -1,4 +1,4 @@
-import { Asset, AssetType, Finances, Expense, Loan, LoanType, MonthlyFinanceSnapshot, RiskProfile, Settings } from '../types';
+import { Asset, AssetType, Finances, Expense, Loan, LoanType, RiskProfile, Settings } from '../types';
 
 /**
  * "Try a Sample" profile: a household that reflects the average American
@@ -86,17 +86,6 @@ const assets = (): Asset[] => [
     { id: 'sample-savings', name: 'Emergency Fund', type: AssetType.Cash, value: 4500 },
 ];
 
-/** Five prior months of income vs. expenses so the history chart has shape. */
-const history = (monthlyIncome: number, monthlyExpenses: number): MonthlyFinanceSnapshot[] => {
-    const wobble = [-120, 85, -40, 150, -70];
-    const now = new Date();
-    return wobble.map((delta, i) => {
-        const d = new Date(now.getFullYear(), now.getMonth() - (wobble.length - i), 1);
-        const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        return { month, income: monthlyIncome, expenses: monthlyExpenses + delta };
-    });
-};
-
 export const createSampleFinances = (): Finances => {
     const sampleExpenses = expenses();
     const monthlyNetIncome = 6200;
@@ -112,7 +101,6 @@ export const createSampleFinances = (): Finances => {
         expenses: sampleExpenses,
         loans: loans(),
         assets: assets(),
-        incomeExpenseHistory: history(monthlyNetIncome, sampleExpenses.reduce((sum, e) => sum + e.amount, 0)),
     };
 };
 

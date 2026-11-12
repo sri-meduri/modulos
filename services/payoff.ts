@@ -151,16 +151,19 @@ export const formatMonthYear = (d: Date): string =>
 export const payoffLabel = (result: PayoffResult): string =>
     result.months === 0 ? 'Debt-free' : result.neverPaysOff ? 'Not within 50 years' : formatMonthYear(addMonths(result.months));
 
-/** "2 yrs 3 mos" / "7 months" / "1 month". */
+/** "2 years 3 months" / "7 months" / "1 month" (full words, no abbreviations). */
 export const formatDuration = (months: number): string => {
     if (months <= 0) return '0 months';
     const y = Math.floor(months / 12);
     const m = months % 12;
     const parts: string[] = [];
-    if (y) parts.push(`${y} yr${y === 1 ? '' : 's'}`);
-    if (m) parts.push(`${m} mo${m === 1 ? '' : 's'}`);
+    if (y) parts.push(`${y} year${y === 1 ? '' : 's'}`);
+    if (m) parts.push(`${m} month${m === 1 ? '' : 's'}`);
     return parts.join(' ');
 };
+
+/** "March 2029" (full month name, used where there is room). */
+export const formatMonthYearLong = (d: Date): string => d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
 export const monthKeyToDate = (key: string): Date => {
     const [y, m] = key.split('-').map(Number);

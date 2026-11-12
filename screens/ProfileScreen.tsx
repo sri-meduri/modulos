@@ -15,7 +15,7 @@ const PASSWORD_REQUIREMENTS = 'Password must be at least 8 characters and includ
 
 const ProfileScreen: React.FC = () => {
     const router = useRouter();
-    const { user, isGuest, isSample, signOut, openAuth, changePassword } = useAuth();
+    const { user, isGuest, isSample, signOut, openAuth, changePassword, startWithOwnData } = useAuth();
     const { deleteAllData, settings, setSettings } = useFinance();
     const { banks, signedIn } = useBanks();
     const [pwOpen, setPwOpen] = useState(false);
@@ -71,6 +71,14 @@ const ProfileScreen: React.FC = () => {
                     </Stack>
                 </Inline>
             </Card>
+
+            {isSample ? (
+                <Card tone="amber" gap="md">
+                    <Text variant="bodyStrong">You're viewing sample data</Text>
+                    <Text variant="small" color="textMuted">Clear it to start fresh as a guest with your own numbers. Nothing from the sample is kept.</Text>
+                    <Button compact onPress={() => { startWithOwnData(); router.replace('/overview'); }}>Clear sample data and start fresh</Button>
+                </Card>
+            ) : null}
 
             {isGuest ? (
                 <Card tone="mint" gap="md">

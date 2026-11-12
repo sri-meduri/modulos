@@ -50,8 +50,10 @@ export interface PaymentCandidate {
 
 export interface Expense {
     id: string;
-    name:string;
+    name: string;
     amount: number;
+    /** Category label (see EXPENSE_CATEGORIES); missing = guessed from the name, else "Other". */
+    category?: string;
     /** Set when imported via Plaid; links the expense to a connected bank. */
     plaidItemId?: string;
     institutionName?: string;
@@ -117,6 +119,8 @@ export interface Finances {
     incomeExpenseHistory?: MonthlyFinanceSnapshot[];
     /** Month-end total of active debt balances, for the real history chart. */
     balanceHistory?: { month: string; balance: number }[];
+    /** Month-end totals of bank-linked assets; the Assets tab shows retirement growth from this. */
+    assetHistory?: { month: string; total: number; retirement: number }[];
 }
 
 export interface Settings {

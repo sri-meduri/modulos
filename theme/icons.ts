@@ -28,6 +28,8 @@ export const icons = {
     chart: ['M4 20V10', 'M10 20V4', 'M16 20v-7', 'M22 20H2'],
     dollar: ['M12 3v18', 'M16 7H10a3 3 0 000 6h4a3 3 0 010 6H8'],
     cross: ['M6 6l12 12', 'M18 6L6 18'],
+    edit: ['M4 20h4L19 9l-4-4L4 16z', 'M13.5 6.5l4 4'],
+    assets: ['M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3z', 'M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6', 'M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type IconName = keyof typeof icons;

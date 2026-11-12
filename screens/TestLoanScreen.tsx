@@ -15,7 +15,7 @@ const VERDICT: Record<Verdict, { tone: 'accent' | 'amber' | 'risk'; badge: 'mint
 
 const TestLoanScreen: React.FC = () => {
     const router = useRouter();
-    const { finances, setFinances, settings, setSettings, activeLoans, monthlyExpensesTotal } = useFinance();
+    const { finances, setFinances, settings, setSettings, activeLoans, monthlyExpensesTotal, grossIncomeForDti } = useFinance();
     const [amount, setAmount] = useState('18000');
     const [apr, setApr] = useState('6.9');
     const [months, setMonths] = useState('60');
@@ -26,11 +26,11 @@ const TestLoanScreen: React.FC = () => {
     const result = useMemo(() => evaluateNewLoan(
         { amount: toNumber(amount), apr: toNumber(apr), termMonths: Math.max(1, Math.round(toNumber(months))), paymentOverride: payOverride === '' ? undefined : toNumber(payOverride) },
         {
-            loans: activeLoans, netIncome: finances.monthlyNetIncome, grossIncome: finances.monthlyGrossIncome,
+            loans: activeLoans, netIncome: finances.monthlyNetIncome, grossIncome: grossIncomeForDti,
             expensesTotal: monthlyExpensesTotal, riskProfile: settings.riskProfile, strategy: settings.strategy ?? 'avalanche',
             customOrder: settings.customOrder, extra: settings.extraPayment ?? 0,
         }
-    ), [amount, apr, months, payOverride, activeLoans, finances.monthlyNetIncome, finances.monthlyGrossIncome, monthlyExpensesTotal, settings]);
+    ), [amount, apr, months, payOverride, activeLoans, finances.monthlyNetIncome, grossIncomeForDti, monthlyExpensesTotal, settings]);
 
     const verdict = VERDICT[result.verdict];
     const valid = toNumber(amount) > 0;
@@ -92,8 +92,7 @@ const TestLoanScreen: React.FC = () => {
                         </Inline>
                         <Gauge value={result.dtiAfter} before={result.dtiBefore} limit={result.threshold} tone={verdict.tone} label="Debt-to-income with the new loan" />
                         <Stack gap="xs">{result.reasons.map(r => <Text key={r} variant="small">{r}</Text>)}</Stack>
-                        {result.incomeApproximated && !noIncome ? <Text variant="caption" color="textMuted">DTI uses take-home pay because gross income isn’t set, so it reads a little high.</Text> : null}
-                    </Card>
+                                            </Card>
 
                     <Card gap="sm">
                         <Row label="Total debt" value={<Text variant="bodyStrong">{money(result.totalDebtBefore)} → {money(result.totalDebtAfter)}</Text>} />

@@ -4,15 +4,16 @@ import { useFinance } from '../contexts/FinanceContext';
 import { Payment } from '../types';
 import { confirmPayment, logManualPayment, milestonesFor, planVsActual, removePayment, summarizeProgress } from '../services/payments';
 import { usePlan } from '../hooks/usePlan';
+import { formatMonthYear } from '../services/payoff';
 import { getEffectiveMinPayment } from '../services/loanCalculator';
 import { money, toNumber } from '../lib/format';
 import { colors } from '../theme';
-import { BarChart, Button, Card, Chart, Chip, Field, Grid, Icon, Inline, Legend, PageTitle, ProgressBar, Screen, Section, Sheet, Stack, Text, TextButton } from '../components/ui';
+import { BarChart, Button, Card, Chart, checkpoints, Chip, Field, Grid, Icon, Inline, Legend, PageTitle, ProgressBar, Screen, Section, Sheet, Stack, Text, TextButton } from '../components/ui';
 
 const fmtDate = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 const ProgressScreen: React.FC = () => {
-    const { finances, setFinances, activeLoans, paymentCandidates, resolveCandidate } = useFinance();
+    const { finances, setFinances, activeLoans, paymentCandidates, resolveCandidate, bankLinked } = useFinance();
     const [logOpen, setLogOpen] = useState(false);
     const [loanId, setLoanId] = useState('');
     const [amount, setAmount] = useState('');
@@ -87,7 +88,7 @@ const ProgressScreen: React.FC = () => {
                         <ProgressBar value={progress.percent} label="Total paid off" />
                         {progress.extraPaidTotal > 0 ? <Text variant="smallStrong" color="accent">{money(progress.extraPaidTotal)} paid above minimums so far.</Text> : null}
                     </Card>
-                    {plannedMonthly > 0 ? (
+                    {bankLinked && plannedMonthly > 0 ? (
                         <Card gap="md">
                             <Inline justify="space-between"><Text variant="h3">Plan vs actual</Text><Text variant="label" color="textMuted">last 6 months</Text></Inline>
                             <BarChart label="Planned payments compared with payments actually made, by month" colors={[colors.line, colors.accent]} groups={months.map(m => ({ label: m.label, values: [m.planned, m.actual] }))} />
@@ -99,11 +100,17 @@ const ProgressScreen: React.FC = () => {
                             </Inline>
                             <Text variant="caption" color="textMuted">Plan = every minimum payment plus your {money(plan.extra)} extra. Change it in Plan.</Text>
                         </Card>
-                    ) : null}
+                    ) : (
+                        <Card tone="outline" gap="sm">
+                            <Text variant="bodyStrong">Plan vs actual</Text>
+                            <Text variant="small" color="textMuted">Connect a bank to compare what you planned with what you actually paid each month. We read the real payment dates from your accounts.</Text>
+                            <Link href="/profile/accounts"><Text variant="smallStrong" color="accent">Connect a bank</Text></Link>
+                        </Card>
+                    )}
                     {history.length >= 2 ? (
                         <Card gap="sm">
                             <Text variant="label" color="textMuted">Balance history</Text>
-                            <Chart height={130} label="Total debt balance by month" series={[{ data: history, color: colors.accent, fill: true }]} />
+                            <Chart height={170} label="Total debt balance by month" xTicks={checkpoints((finances.balanceHistory ?? []).map(h => { const [y, m] = h.month.split('-').map(Number); return formatMonthYear(new Date(y, m - 1, 1)); }), 4)} series={[{ data: history, color: colors.accent, fill: true }]} />
                         </Card>
                     ) : null}
                 </Stack>

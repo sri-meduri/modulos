@@ -34,6 +34,8 @@ const schema = a.schema({
       incomeExpenseHistory: a.json(),
       // Rolling [{month, balance}] of total active debt, recorded as the app is used.
       balanceHistory: a.json(),
+      // Rolling [{month, total, retirement}] of bank-linked asset balances (Assets tab performance).
+      assetHistory: a.json(),
     })
     .authorization((allow) => [allow.owner()]),
 
@@ -98,6 +100,11 @@ const schema = a.schema({
     attentionItemIds: a.string().array(),
     lastSyncedAt: a.datetime(),
   }),
+  PlaidTransactionsResult: a.customType({
+    // [{ id, date, name, amount, category, account }]; amount > 0 is money out.
+    transactions: a.json().required(),
+  }),
+
   PlaidDisconnectResult: a.customType({
     itemId: a.string().required(),
     removed: a.boolean().required(),
@@ -133,6 +140,15 @@ const schema = a.schema({
       itemId: a.string(),
     })
     .returns(a.ref('PlaidSyncResult'))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(plaidFunction)),
+
+  listPlaidTransactions: a
+    .mutation()
+    .arguments({
+      days: a.integer(),
+    })
+    .returns(a.ref('PlaidTransactionsResult'))
     .authorization((allow) => [allow.authenticated()])
     .handler(a.handler.function(plaidFunction)),
 

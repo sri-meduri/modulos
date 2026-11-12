@@ -22,6 +22,8 @@ export const auth = defineAuth({
         'https://main.d1ds52t71fj84r.amplifyapp.com/',
         'https://modulos.app/',
         'https://www.modulos.app/',
+        // Test (staging) site. Each origin that starts Google sign-in must be listed here.
+        'https://staging.d1ds52t71fj84r.amplifyapp.com/',
       ],
       logoutUrls: [
         'modulos://',
@@ -30,6 +32,7 @@ export const auth = defineAuth({
         'https://main.d1ds52t71fj84r.amplifyapp.com/',
         'https://modulos.app/',
         'https://www.modulos.app/',
+        'https://staging.d1ds52t71fj84r.amplifyapp.com/',
       ],
     },
   },

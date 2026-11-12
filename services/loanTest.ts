@@ -46,7 +46,6 @@ export interface LoanTestResult {
     reasons: string[];
     /** "What would make this safer?" */
     suggestions: string[];
-    incomeApproximated: boolean;
 }
 
 export const BORDERLINE_FRACTION = 0.85;
@@ -68,8 +67,8 @@ export const evaluateNewLoan = (input: LoanTestInput, snap: FinanceSnapshot, wit
     const years = input.termMonths / 12;
     const payment = input.paymentOverride !== undefined ? input.paymentOverride : calculateMinimumPayment(input.amount, input.apr, years);
     const negativeAmortization = payment < (input.amount * input.apr) / 1200 - 0.005;
-    const incomeApproximated = snap.grossIncome <= 0;
-    const dtiIncome = incomeApproximated ? snap.netIncome : snap.grossIncome;
+    // Callers pass gross income (entered or estimated); fall back to take-home only if that is missing.
+    const dtiIncome = snap.grossIncome > 0 ? snap.grossIncome : snap.netIncome;
     const threshold = DTI_THRESHOLDS[snap.riskProfile];
 
     const debtBefore = monthlyMin(snap.loans);
@@ -130,6 +129,6 @@ export const evaluateNewLoan = (input: LoanTestInput, snap: FinanceSnapshot, wit
     return {
         verdict, payment, negativeAmortization, totalDebtBefore: snap.loans.reduce((a, l) => a + l.balance, 0), totalDebtAfter: snap.loans.reduce((a, l) => a + l.balance, 0) + input.amount, dtiBefore, dtiAfter, threshold, leftoverBefore, leftoverAfter, stressLeftover,
         debtFreeMonthsBefore: before.months, debtFreeMonthsAfter: after.months,
-        neverPaysOffAfter: after.neverPaysOff, reasons, suggestions, incomeApproximated,
+        neverPaysOffAfter: after.neverPaysOff, reasons, suggestions,
     };
 };

@@ -5,10 +5,12 @@ import { useFinance } from '../contexts/FinanceContext';
 import { useAuth } from '../contexts/AuthContext';
 import { PayoffStrategy } from '../types';
 import { usePlan } from '../hooks/usePlan';
-import { addMonths, extraForTarget, formatDuration, formatMonthYear, monthsBetweenNow, payoffLabel, simulatePayoff } from '../services/payoff';
-import { money } from '../lib/format';
-import { Avatar, Badge, Button, Card, Chart, Chip, Field, Grid, Inline, Legend, PageTitle, Screen, Section, SegTabs, Select, Slider, StackedBar, Dot, Stack, Stepper, Text, TextButton } from '../components/ui';
+import { addMonths, extraForTarget, formatDuration, formatMonthYear, formatMonthYearLong, monthsBetweenNow, payoffLabel, simulatePayoff } from '../services/payoff';
 import { getEffectiveMinPayment } from '../services/loanCalculator';
+import { monthlyPaymentPlan, paymentPlanCalendar, paymentPlanText } from '../services/payPlan';
+import { sharePlan } from '../lib/share';
+import { money, toNumber } from '../lib/format';
+import { Badge, Button, Card, Chart, checkpoints, Chip, CheckMark, Dot, Field, Grid, Icon, Inline, Legend, PageTitle, Screen, Section, SegTabs, Select, Slider, Stack, StackedBar, Stepper, Text, TextButton } from '../components/ui';
 
 const STRATEGIES: { value: PayoffStrategy; label: string }[] = [
     { value: 'avalanche', label: 'Avalanche' },
@@ -20,68 +22,81 @@ const BLURB: Record<PayoffStrategy, string> = {
     snowball: 'Smallest balance first. Quick wins keep you motivated.',
     custom: 'You choose the order.',
 };
-const roundTo = (n: number, step: number) => Math.round(n / step) * step;
+
+/** Warn when less than this much (or this share of income) is left after the extra. */
+const bufferFloor = (income: number) => Math.max(100, income * 0.03);
 
 /** Samples a series to ~`points` entries so long payoffs stay readable. */
-const sample = <T,>(n: number, points: number, at: (i: number) => T): T[] => {
+const sample = (n: number, points: number): number[] => {
     const stride = Math.max(1, Math.ceil(n / points));
-    const out: T[] = [];
-    for (let i = 0; i <= n; i += stride) out.push(at(i));
-    if ((n % stride) !== 0) out.push(at(n));
+    const out: number[] = [];
+    for (let i = 0; i <= n; i += stride) out.push(i);
+    if (out[out.length - 1] !== n) out.push(n);
     return out;
 };
 
 const PlanScreen: React.FC = () => {
     const { isGuest, isSample, openAuth } = useAuth();
-    const { finances, settings, setSettings, activeLoans, consideringLoans, monthlyLeftoverMoney } = useFinance();
+    const { finances, settings, setSettings, activeLoans, consideringLoans, paidOffLoans, monthlyLeftoverMoney } = useFinance();
     const plan = usePlan();
-    const [target, setTarget] = useState(settings.targetDate ?? '');
+    const [payView, setPayView] = useState<'total' | 'debt'>('total');
+    const [whatIfKind, setWhatIfKind] = useState<'loan' | 'refi'>('loan');
     const [includeIds, setIncludeIds] = useState<string[]>([]);
     const [refiId, setRefiId] = useState('');
     const [refiApr, setRefiApr] = useState('');
+    const [customText, setCustomText] = useState('');
+    const [shared, setShared] = useState<string | null>(null);
 
-    // Money available for debt payoff = what is left after bills and minimums. The slider runs
-    // from $0 to that amount, so its right end is always "use everything available".
+    // Money available for debt payoff = what is left after bills and minimums. The extra can
+    // never exceed it, so "Left after your extra" can never go negative.
     const available = Math.max(0, Math.floor(monthlyLeftoverMoney));
     const cap = Math.max(25, Math.floor(available / 25) * 25);
-    const [payView, setPayView] = useState<'total' | 'debt'>('total');
-    const extra = plan.extra;
-    const setExtra = (v: number) => setSettings(p => ({ ...p, extraPayment: Math.max(0, Math.round(v)) }));
+    const extra = Math.min(plan.extra, available);
+    const overAvailable = plan.extra > available;
+    const setExtra = (v: number) => setSettings(p => ({ ...p, extraPayment: Math.max(0, Math.min(available, Math.round(v))) }));
+    const left = monthlyLeftoverMoney - extra;
+    const tight = extra > 0 && left < bufferFloor(finances.monthlyNetIncome);
     const names = useMemo(() => new Map(finances.loans.map(l => [l.id, l.name])), [finances.loans]);
 
     const paySegments = useMemo(() => {
-        const mins = activeLoans.map(l => ({ id: l.id, name: l.name, amount: getEffectiveMinPayment(l) }));
         const total = (plan.plan.totalMinimum + extra) || 1;
         const out: { key: string; label: string; amount: number; share: number; color: string }[] = [];
         if (payView === 'total') {
             out.push({ key: 'min', label: 'Minimum payments', amount: plan.plan.totalMinimum, share: plan.plan.totalMinimum / total, color: colors.series[2] });
         } else {
-            plan.plan.order.forEach((id, k) => { const m = mins.find(x => x.id === id); if (m) out.push({ key: id, label: `${m.name} minimum`, amount: m.amount, share: m.amount / total, color: colors.series[(k + 2) % colors.series.length] }); });
+            plan.plan.order.forEach((id, k) => {
+                const l = activeLoans.find(x => x.id === id);
+                if (l) { const amt = getEffectiveMinPayment(l); out.push({ key: id, label: `${l.name} minimum`, amount: amt, share: amt / total, color: colors.series[(k + 2) % colors.series.length] }); }
+            });
         }
         if (extra > 0) out.push({ key: 'extra', label: 'Extra payment', amount: extra, share: extra / total, color: colors.accent });
         return out;
     }, [activeLoans, plan, extra, payView]);
 
+    // Before/after chart with a rounded balance axis and a few month checkpoints.
     const horizon = Math.max(plan.baseline.months, plan.plan.months);
     const compare = useMemo(() => {
-        const idx = sample(horizon, 40, i => i);
+        const idx = sample(horizon, 40);
         return {
-            idx,
             min: idx.map(i => plan.baseline.balanceSeries[Math.min(i, plan.baseline.months)] ?? 0),
             withExtra: idx.map(i => plan.plan.balanceSeries[Math.min(i, plan.plan.months)] ?? 0),
+            ticks: checkpoints(idx.map(i => formatMonthYear(addMonths(i))), 4),
         };
     }, [plan, horizon]);
 
-    const stacked = useMemo(() => {
-        const idx = sample(plan.plan.months, 30, i => i);
-        return plan.plan.order.map((id, k) => ({ data: idx.map(i => plan.plan.loanSeries[id]?.[i] ?? 0), color: colors.series[k % colors.series.length] }));
-    }, [plan]);
-
-    const targetMonths = target ? monthsBetweenNow(target) : 0;
-    const needed = useMemo(
-        () => (target && targetMonths > 0 ? extraForTarget(activeLoans, targetMonths, plan.strategy, plan.customOrder) : undefined),
-        [target, targetMonths, activeLoans, plan.strategy, plan.customOrder]
-    );
+    // "Aim for a date": a month slider limited to what is actually reachable with the money available.
+    const earliest = useMemo(() => Math.max(1, simulatePayoff(activeLoans, available, plan.strategy, plan.customOrder).months), [activeLoans, available, plan.strategy, plan.customOrder]);
+    const latest = Math.max(earliest, plan.baseline.months);
+    const savedTarget = settings.targetDate ? monthsBetweenNow(settings.targetDate) : 0;
+    const [targetMonths, setTargetMonths] = useState(Math.min(latest, Math.max(earliest, savedTarget > 0 ? savedTarget : plan.plan.months)));
+    const pickTarget = (m: number) => {
+        setTargetMonths(m);
+        const d = addMonths(m);
+        setSettings(p => ({ ...p, targetDate: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }));
+    };
+    const neededRaw = useMemo(() => extraForTarget(activeLoans, targetMonths, plan.strategy, plan.customOrder, Math.max(available, 25)), [activeLoans, targetMonths, plan.strategy, plan.customOrder, available]);
+    const needed = neededRaw === null ? null : Math.min(neededRaw, available);
+    const targetLeft = needed === null ? null : monthlyLeftoverMoney - needed;
 
     const milestones = useMemo(() => {
         const s = plan.plan.balanceSeries;
@@ -95,15 +110,20 @@ const PlanScreen: React.FC = () => {
         return out;
     }, [plan]);
 
-    // What-ifs: considering loans + a refinance, compared with the current plan.
+    // What if: one comparison against today's plan, either a loan you're considering or a refinance.
     const whatIf = useMemo(() => {
-        const apr = parseFloat(refiApr);
-        const refi = !!refiId && refiApr !== '' && apr >= 0;
-        if (includeIds.length === 0 && !refi) return null;
-        let loans = [...activeLoans, ...consideringLoans.filter(l => includeIds.includes(l.id)).map(l => ({ ...l, status: 'active' as const }))];
-        if (refi) loans = loans.map(l => (l.id === refiId ? { ...l, apr } : l));
-        return simulatePayoff(loans, plan.extra, plan.strategy, plan.customOrder);
-    }, [activeLoans, consideringLoans, includeIds, refiId, refiApr, plan]);
+        let loans = [...activeLoans];
+        if (whatIfKind === 'loan') {
+            const picked = consideringLoans.filter(l => includeIds.includes(l.id));
+            if (picked.length === 0) return null;
+            loans = [...loans, ...picked.map(l => ({ ...l, status: 'active' as const }))];
+        } else {
+            const apr = parseFloat(refiApr);
+            if (!refiId || refiApr === '' || !(apr >= 0)) return null;
+            loans = loans.map(l => (l.id === refiId ? { ...l, apr } : l));
+        }
+        return simulatePayoff(loans, extra, plan.strategy, plan.customOrder);
+    }, [activeLoans, consideringLoans, includeIds, whatIfKind, refiId, refiApr, extra, plan.strategy, plan.customOrder]);
 
     const moveCustom = (id: string, dir: -1 | 1) => {
         const order = plan.plan.order.slice();
@@ -112,6 +132,12 @@ const PlanScreen: React.FC = () => {
         if (i < 0 || j < 0 || j >= order.length) return;
         [order[i], order[j]] = [order[j], order[i]];
         setSettings(p => ({ ...p, customOrder: order }));
+    };
+
+    const schedule = useMemo(() => monthlyPaymentPlan(activeLoans, extra, plan.strategy, plan.customOrder), [activeLoans, extra, plan.strategy, plan.customOrder]);
+    const exportPlan = async () => {
+        const how = await sharePlan(paymentPlanCalendar(schedule), paymentPlanText(schedule));
+        setShared(how === 'downloaded' ? 'Calendar file downloaded. Open it to add monthly reminders.' : how === 'shared' ? null : 'Could not share the plan.');
     };
 
     if (activeLoans.length === 0) {
@@ -128,7 +154,7 @@ const PlanScreen: React.FC = () => {
 
     const interestDelta = plan.interestSaved;
     const multi = activeLoans.length > 1;
-    const savings = [plan.monthsSaved > 0 ? `${formatDuration(plan.monthsSaved)} sooner` : null, interestDelta >= 1 ? `about ${money(roundTo(interestDelta, 10))} less interest` : null].filter(Boolean).join(' and ');
+    const savings = [plan.monthsSaved > 0 ? `${formatDuration(plan.monthsSaved)} sooner` : null, interestDelta >= 1 ? `about ${money(Math.round(interestDelta / 10) * 10)} less interest` : null].filter(Boolean).join(' and ');
 
     return (
         <Screen>
@@ -142,19 +168,23 @@ const PlanScreen: React.FC = () => {
 
                     <Card gap="md">
                         <Text variant="label" color="textMuted">Extra each month</Text>
-                        <Stepper label="extra payment" value={extra} step={25} min={0} max={Math.max(cap, extra)} onChange={setExtra} format={money} />
+                        <Stepper label="extra payment" value={extra} step={25} min={0} max={available} onChange={setExtra} format={money} />
                         <Slider label="Extra payment per month" value={Math.min(extra, cap)} min={0} max={cap} step={25} onChange={setExtra} valueText={`${money(extra)} extra per month`} />
                         <Inline justify="space-between"><Text variant="caption" color="textMuted">{money(0)}</Text><Text variant="caption" color="accent">Available for debt payoff: {money(available)}/mo</Text></Inline>
+                        <Inline align="flex-end" gap="md">
+                            <Field label="Or type an amount" prefix="$" numeric value={customText} placeholder={String(extra)} onChange={v => { setCustomText(v); if (v !== '') setExtra(toNumber(v)); }} hint={toNumber(customText) > available ? `Capped at ${money(available)}, what you have available.` : undefined} />
+                        </Inline>
                         <Inline wrap gap="sm">
-                            {[50, 100, 250, 500].filter(v => v < available).map(v => <Chip key={v} active={extra === v} onPress={() => setExtra(v)}>{money(v)}</Chip>)}
-                            {available > 0 ? <Chip active={extra === available} onPress={() => setExtra(available)}>{`Use all available · ${money(available)}`}</Chip> : null}
-                            <Chip active={extra === 0} onPress={() => setExtra(0)}>None</Chip>
+                            {[50, 100, 250, 500].filter(v => v < available).map(v => <Chip key={v} active={extra === v} onPress={() => { setCustomText(''); setExtra(v); }}>{money(v)}</Chip>)}
+                            {available > 0 ? <Chip active={extra === available} onPress={() => { setCustomText(''); setExtra(available); }}>{`Use all available · ${money(available)}`}</Chip> : null}
+                            <Chip active={extra === 0} onPress={() => { setCustomText(''); setExtra(0); }}>None</Chip>
                         </Inline>
                         <Inline justify="space-between">
                             <Text variant="small" color="textMuted">Left after your extra</Text>
-                            <Text variant="smallStrong" color={monthlyLeftoverMoney - extra < 0 ? 'risk' : 'text'}>{money(monthlyLeftoverMoney - extra)}/mo</Text>
+                            <Text variant="smallStrong" color={tight ? 'amber' : 'text'}>{money(left)}/mo</Text>
                         </Inline>
-                        {extra > available ? <Text variant="caption" color="amber">That’s more than the {money(available)} you have available after bills and minimums.</Text> : null}
+                        {tight ? <Text variant="caption" color="amber">That leaves only {money(left)} a month as a cushion for surprises.</Text> : null}
+                        {overAvailable ? <Text variant="caption" color="amber">Your saved extra was more than you have available now, so it's capped at {money(available)}.</Text> : null}
                     </Card>
 
                     <Card gap="md">
@@ -179,16 +209,19 @@ const PlanScreen: React.FC = () => {
                         </Card>
                     ) : null}
 
-                    <Section title={`Payoff order · ${plan.strategy === 'avalanche' ? 'highest APR first' : plan.strategy === 'snowball' ? 'smallest balance first' : 'your order'}`}>
+                    <Section title={`Payoff checklist · ${plan.strategy === 'avalanche' ? 'highest APR first' : plan.strategy === 'snowball' ? 'smallest balance first' : 'your order'}`}>
                         <Card gap="md">
                             {plan.plan.order.map((id, i) => {
                                 const l = activeLoans.find(x => x.id === id)!;
+                                const month = plan.plan.payoffMonth[id];
                                 return (
                                     <Inline key={id} gap="md">
-                                        <Avatar letter={String(i + 1)} size={28} />
-                                        <Text style={{ flex: 1 }} numberOfLines={1}>{names.get(id)}</Text>
-                                        <Text variant="label" color="amber">{l.apr.toFixed(1)}%</Text>
-                                        <Text variant="body" style={{ minWidth: 72, textAlign: 'right', fontVariant: ['tabular-nums'] }}>{money(l.balance)}</Text>
+                                        <CheckMark checked={false} />
+                                        <Stack gap="xs" style={{ flex: 1 }}>
+                                            <Text variant={i === 0 ? 'bodyStrong' : 'body'} numberOfLines={1}>{l.name}</Text>
+                                            <Text variant="caption" color="textMuted">{month ? `Paid off ${formatMonthYearLong(addMonths(month))}` : 'Payoff date unavailable'} · {l.apr.toFixed(1)}% APR</Text>
+                                        </Stack>
+                                        <Text variant="smallStrong">{money(l.balance)}</Text>
                                         {plan.strategy === 'custom' && multi ? (
                                             <Inline gap="xs">
                                                 <TextButton color={i === 0 ? 'textMuted' : 'accent'} onPress={() => moveCustom(id, -1)}>↑</TextButton>
@@ -198,7 +231,15 @@ const PlanScreen: React.FC = () => {
                                     </Inline>
                                 );
                             })}
-                            {multi ? <Text variant="caption" color="textMuted">Paid off: {plan.plan.order.map(id => `${names.get(id)} ${plan.plan.payoffMonth[id] ? formatMonthYear(addMonths(plan.plan.payoffMonth[id])) : '—'}`).join(' · ')}</Text> : null}
+                            {paidOffLoans.map(l => (
+                                <Inline key={l.id} gap="md">
+                                    <CheckMark checked />
+                                    <Stack gap="xs" style={{ flex: 1 }}>
+                                        <Text color="textMuted" style={{ textDecorationLine: 'line-through' }} numberOfLines={1}>{l.name}</Text>
+                                        <Text variant="caption" color="accent">Paid off</Text>
+                                    </Stack>
+                                </Inline>
+                            ))}
                         </Card>
                     </Section>
                 </Stack>
@@ -206,7 +247,7 @@ const PlanScreen: React.FC = () => {
                 <Stack gap="lg">
                     <Card gap="md">
                         <Legend items={[{ label: 'Minimums only', color: colors.textMuted }, { label: `With ${money(extra)} extra`, color: colors.accent }]} />
-                        <Chart height={170} label="Balance with and without the extra payment" xLabels={[formatMonthYear(addMonths(0)), formatMonthYear(addMonths(horizon))]}
+                        <Chart height={200} label="Balance with and without the extra payment" xTicks={compare.ticks}
                             series={[{ data: compare.min, color: colors.textMuted, width: 2.5 }, { data: compare.withExtra, color: colors.accent }]} />
                         <Inline justify="space-between"><Text variant="small">Debt-free</Text><Text variant="smallStrong">{extra > 0 && plan.monthsSaved > 0 ? `${payoffLabel(plan.baseline)} → ` : ''}{payoffLabel(plan.plan)}</Text></Inline>
                         <Inline justify="space-between"><Text variant="small">Total interest</Text><Text variant="smallStrong">{extra > 0 && interestDelta >= 1 ? `${money(plan.baseline.totalInterest)} → ` : ''}{money(plan.plan.totalInterest)}</Text></Inline>
@@ -217,48 +258,89 @@ const PlanScreen: React.FC = () => {
                         ) : null}
                     </Card>
 
-                    {multi && !plan.plan.neverPaysOff ? (
-                        <Section title="Balance by debt">
+                    {latest > earliest ? (
+                        <Section title="Aim for a date">
                             <Card gap="md">
-                                <Chart stacked height={170} label="Stacked balance by debt over time" series={stacked} />
-                                <Legend items={plan.plan.order.map((id, k) => ({ label: names.get(id) ?? id, color: colors.series[k % colors.series.length] }))} />
+                                <Inline justify="space-between" align="baseline">
+                                    <Text variant="label" color="textMuted">Debt-free by</Text>
+                                    <Text variant="stat">{formatMonthYearLong(addMonths(targetMonths))}</Text>
+                                </Inline>
+                                <Slider label="Target debt-free month" value={targetMonths} min={earliest} max={latest} step={1} onChange={pickTarget} valueText={formatMonthYearLong(addMonths(targetMonths))} />
+                                <Inline justify="space-between"><Text variant="caption" color="textMuted">{formatMonthYearLong(addMonths(earliest))}</Text><Text variant="caption" color="textMuted">{formatMonthYearLong(addMonths(latest))}</Text></Inline>
+                                {needed === null ? <Text variant="small" color="risk">That date isn’t reachable with the money you have available.</Text> : (
+                                    <Inline justify="space-between" gap="md">
+                                        <Text variant="small" style={{ flex: 1 }}>{needed === 0 ? 'You’re already on track for this date.' : `Needs ${money(needed)} extra a month.`}</Text>
+                                        {needed > 0 && needed !== extra ? <Button variant="secondary" compact onPress={() => { setCustomText(''); setExtra(needed); }}>Use this</Button> : null}
+                                    </Inline>
+                                )}
+                                {needed !== null && targetLeft !== null && targetLeft < bufferFloor(finances.monthlyNetIncome) && needed > 0 ? <Text variant="caption" color="amber">This leaves only {money(targetLeft)} a month spare.</Text> : null}
+                                <Text variant="caption" color="textMuted">The earliest possible date uses all {money(available)} you have available each month.</Text>
                             </Card>
                         </Section>
                     ) : null}
 
-                    <Section title="Aim for a date">
-                        <Card gap="md">
-                            <Inline><Field label="Debt-free by (YYYY-MM)" value={target} onChange={v => { setTarget(v); setSettings(p => ({ ...p, targetDate: v || undefined })); }} placeholder="e.g. 2028-06" keyboardType="numbers-and-punctuation" /></Inline>
-                            {target && targetMonths <= 0 ? <Text variant="small" color="amber">Pick a future month (YYYY-MM).</Text> : null}
-                            {target && targetMonths > 0 && needed === null ? <Text variant="small" color="risk">That date isn’t reachable with these debts.</Text> : null}
-                            {target && targetMonths > 0 && typeof needed === 'number' ? (
-                                <Inline justify="space-between" gap="md">
-                                    <Text variant="small" style={{ flex: 1 }}>{needed === 0 ? 'You’re already on track for that date.' : `You’d need ${money(needed)} extra each month.`}</Text>
-                                    {needed > 0 ? <Button variant="secondary" compact onPress={() => setExtra(needed)}>Use this</Button> : null}
-                                </Inline>
-                            ) : null}
-                        </Card>
-                    </Section>
-
                     <Section title="What if…">
                         <Card gap="md">
-                            {consideringLoans.length === 0 ? <Text variant="small" color="textMuted">Add a loan you’re considering with <Link href="/debts/test"><Text variant="smallStrong" color="accent">Test a new loan</Text></Link> to compare it here.</Text> : null}
-                            {consideringLoans.map(l => (
-                                <Inline key={l.id} gap="md" justify="space-between">
-                                    <Text variant="small" style={{ flex: 1 }}>{l.name} · {money(l.balance)} at {l.apr}%</Text>
-                                    <Chip active={includeIds.includes(l.id)} onPress={() => setIncludeIds(ids => (ids.includes(l.id) ? ids.filter(x => x !== l.id) : [...ids, l.id]))}>{includeIds.includes(l.id) ? 'Included' : 'Include'}</Chip>
-                                </Inline>
-                            ))}
-                            <Inline align="flex-end">
-                                <Select label="Refinance a debt" value={refiId} options={activeLoans.map(l => ({ value: l.id, label: l.name }))} onChange={setRefiId} />
-                                <Field label="New APR" suffix="%" numeric value={refiApr} onChange={setRefiApr} />
-                            </Inline>
+                            <SegTabs label="What-if type" value={whatIfKind} options={[{ value: 'loan', label: 'I take a new loan' }, { value: 'refi', label: 'I refinance' }]} onChange={setWhatIfKind} />
+                            {whatIfKind === 'loan' ? (
+                                consideringLoans.length === 0 ? (
+                                    <Text variant="small" color="textMuted">See how a loan you’re thinking about changes your payoff date. Check one with <Link href="/debts/test"><Text variant="smallStrong" color="accent">Test a new loan</Text></Link> and add it as a what-if.</Text>
+                                ) : (
+                                    <Stack gap="sm">
+                                        <Text variant="small" color="textMuted">Tap the loans to include in the comparison.</Text>
+                                        {consideringLoans.map(l => (
+                                            <Inline key={l.id} gap="md" justify="space-between">
+                                                <Text variant="small" style={{ flex: 1 }}>{l.name} · {money(l.balance)} at {l.apr}%</Text>
+                                                <Chip active={includeIds.includes(l.id)} onPress={() => setIncludeIds(ids => (ids.includes(l.id) ? ids.filter(x => x !== l.id) : [...ids, l.id]))}>{includeIds.includes(l.id) ? 'Included' : 'Include'}</Chip>
+                                            </Inline>
+                                        ))}
+                                    </Stack>
+                                )
+                            ) : (
+                                <Stack gap="sm">
+                                    <Text variant="small" color="textMuted">See the effect of getting a lower rate on one of your debts.</Text>
+                                    <Inline align="flex-end">
+                                        <Select label="Which debt" value={refiId} options={activeLoans.map(l => ({ value: l.id, label: l.name }))} onChange={setRefiId} />
+                                        <Field label="New APR" suffix="%" numeric value={refiApr} onChange={setRefiApr} />
+                                    </Inline>
+                                </Stack>
+                            )}
                             {whatIf ? (
                                 <Card tone="mint" gap="sm">
+                                    <Text variant="captionStrong" color="accent">WITH THIS CHANGE</Text>
                                     <Inline justify="space-between"><Text variant="small">Debt-free</Text><Text variant="smallStrong">{payoffLabel(plan.plan)} → {payoffLabel(whatIf)}</Text></Inline>
                                     <Inline justify="space-between"><Text variant="small">Total interest</Text><Text variant="smallStrong">{money(plan.plan.totalInterest)} → {money(whatIf.totalInterest)}</Text></Inline>
                                 </Card>
                             ) : null}
+                        </Card>
+                    </Section>
+
+                    <Section title="Put it into action">
+                        <Card gap="md">
+                            {isGuest ? (
+                                <>
+                                    <Text variant="small" color="textMuted">Sign in to get a monthly payment schedule, calendar reminders and an autopay checklist for this plan.</Text>
+                                    <Button compact onPress={() => openAuth('signup')}>Sign in or create an account</Button>
+                                </>
+                            ) : (
+                                <>
+                                    <Text variant="small" color="textMuted">Pay this each month. Set it up as autopay with each lender, or add reminders to your calendar.</Text>
+                                    <Stack gap="sm">
+                                        {schedule.map(p => (
+                                            <Inline key={p.loanId} justify="space-between" gap="md" align="flex-start">
+                                                <Stack gap="xs" style={{ flex: 1 }}>
+                                                    <Text variant="smallStrong" numberOfLines={1}>{p.name}</Text>
+                                                    <Text variant="caption" color="textMuted">{p.dueKnown ? `Due by the ${p.dayOfMonth}${suffix(p.dayOfMonth)}` : 'Add a due day on the debt for reminders'}{p.extra > 0 ? ` · includes ${money(p.extra)} extra` : ''}</Text>
+                                                </Stack>
+                                                <Text variant="smallStrong" color={p.isFocus ? 'accent' : 'text'}>{money(p.amount)}</Text>
+                                            </Inline>
+                                        ))}
+                                    </Stack>
+                                    <Button variant="secondary" onPress={exportPlan}>Add monthly reminders to my calendar</Button>
+                                    {shared ? <Text variant="caption" color="accent">{shared}</Text> : null}
+                                    <Inline align="flex-start" gap="sm"><Icon name="lock" size={16} color="textMuted" /><Text variant="caption" color="textMuted" style={{ flex: 1 }}>Modulos can’t move money for you. Payments are made in your bank or with your lender.</Text></Inline>
+                                </>
+                            )}
                         </Card>
                     </Section>
                 </Stack>
@@ -266,5 +348,7 @@ const PlanScreen: React.FC = () => {
         </Screen>
     );
 };
+
+const suffix = (n: number) => (n % 100 >= 11 && n % 100 <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'));
 
 export default PlanScreen;

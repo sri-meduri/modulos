@@ -1,51 +1,61 @@
 import React, { useMemo, useState } from 'react';
+import { Pressable } from 'react-native';
+import { Link } from 'expo-router';
+import { colors } from '../theme';
 import { useFinance } from '../contexts/FinanceContext';
 import { useBanks } from '../hooks/useBanks';
 import { useAuth } from '../contexts/AuthContext';
-import { EXPENSE_CATEGORIES } from '../constants';
-import { allocateIncome } from '../services/allocation';
-import { colors } from '../theme';
-import { Asset, AssetType, Expense } from '../types';
-import { money, toNumber } from '../lib/format';
-import { BarChart, Badge, Button, Card, Dot, Field, Grid, Icon, Inline, Legend, PageTitle, Screen, Section, Select, Stack, StackedBar, Text, TextButton } from '../components/ui';
+import { useTransactions } from '../hooks/useTransactions';
+import { allocateIncome, expenseCategory } from '../services/allocation';
+import { Expense } from '../types';
+import { money } from '../lib/format';
+import { BarChart, Badge, Button, Card, Chip, Dot, Grid, Icon, Inline, Legend, PageTitle, Screen, Section, SegTabs, Stack, StackedBar, Text } from '../components/ui';
 import IncomeCard from '../components/IncomeCard';
+import AddExpenseSheet, { CATEGORY_LABELS } from '../components/AddExpenseSheet';
 import PlaidLinkButton from '../components/PlaidLinkButton';
-import { Pressable } from 'react-native';
 
-const FIXED_ID = 'fixed-total';
-const CATEGORY_NAMES = new Set(EXPENSE_CATEGORIES.flatMap(c => c.subcategories.map(s => s.name)));
-const ASSET_TYPES = Object.values(AssetType).map(t => ({ value: t, label: t }));
+type Tab = 'summary' | 'income' | 'expenses';
+
+const fullDate = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+const monthName = (key: string) => new Date(`${key}-15T12:00:00`).toLocaleDateString('en-US', { month: 'short' });
 
 const BudgetScreen: React.FC = () => {
     const { isSample } = useAuth();
-    const { finances, setFinances, settings, monthlyExpensesTotal, monthlyDebtPayments, monthlyLeftoverMoney } = useFinance();
+    const { finances, setFinances, settings, bankLinked, monthlyExpensesTotal, monthlyDebtPayments, monthlyLeftoverMoney } = useFinance();
     const { banks, loaded } = useBanks();
-    const [openCat, setOpenCat] = useState<string | null>(null);
-    const [showBreakdown, setShowBreakdown] = useState(false);
+    const [tab, setTab] = useState<Tab>('summary');
+    const [sheetOpen, setSheetOpen] = useState(false);
+    const [editing, setEditing] = useState<Expense | undefined>();
+    const [txFilter, setTxFilter] = useState<'all' | 'spending' | 'income'>('all');
+    const tx = useTransactions(bankLinked && tab === 'expenses');
 
-    const expenses = finances.expenses;
-    const amountOf = (id: string) => expenses.find(e => e.id === id)?.amount ?? 0;
-    const setExpense = (id: string, name: string, amount: number) =>
-        setFinances(prev => ({
-            ...prev,
-            expenses: prev.expenses.some(e => e.id === id)
-                ? prev.expenses.map(e => (e.id === id ? { ...e, amount } : e))
-                : [...prev.expenses, { id, name, amount }],
-        }));
-    const removeExpense = (id: string) => setFinances(prev => ({ ...prev, expenses: prev.expenses.filter(e => e.id !== id) }));
-
-    const otherBills: Expense[] = expenses.filter(e => e.id !== FIXED_ID && !(CATEGORY_NAMES.has(e.id) && !e.plaidItemId) && e.amount !== 0);
-    const breakdownTotal = expenses.filter(e => CATEGORY_NAMES.has(e.id) && !e.plaidItemId).reduce((a, e) => a + e.amount, 0);
-
-    const money_ = allocateIncome(finances.monthlyNetIncome, expenses, monthlyDebtPayments, settings.extraPayment ?? 0);
-    const KIND_COLOR = { debt: colors.series[2], extra: colors.accent, left: colors.accentDeep } as const;
+    const expenses = finances.expenses.filter(e => e.amount > 0);
+    const alloc = allocateIncome(finances.monthlyNetIncome, finances.expenses, monthlyDebtPayments, settings.extraPayment ?? 0);
+    const kindColor = { debt: colors.series[2], extra: colors.accent, left: colors.accentDeep } as const;
     const billColors = [colors.series[3], colors.series[4], colors.series[5], colors.line, colors.textMuted];
     let billIdx = 0;
-    const slices = money_.slices.map(sl => ({ ...sl, color: sl.kind === 'bills' ? billColors[billIdx++ % billColors.length] : KIND_COLOR[sl.kind] }));
-    const history = (finances.incomeExpenseHistory ?? []).filter(m => m.income > 0 || m.expenses > 0);
+    const slices = alloc.slices.map(sl => ({ ...sl, color: sl.kind === 'bills' ? billColors[billIdx++ % billColors.length] : kindColor[sl.kind] }));
 
-    const assets = finances.assets ?? [];
-    const setAsset = (id: string, patch: Partial<Asset>) => setFinances(prev => ({ ...prev, assets: (prev.assets ?? []).map(a => (a.id === id ? { ...a, ...patch } : a)) }));
+    // Income vs bills by month comes from the bank's real transaction dates, so it exists only with a linked bank.
+    const history = useMemo(() => (finances.incomeExpenseHistory ?? []).filter(m => m.income > 0 || m.expenses > 0), [finances.incomeExpenseHistory]);
+
+    const grouped = useMemo(() => {
+        const byCat = new Map<string, Expense[]>();
+        for (const e of expenses) {
+            const c = expenseCategory(e);
+            byCat.set(c, [...(byCat.get(c) ?? []), e]);
+        }
+        return CATEGORY_LABELS.filter(c => byCat.has(c)).map(c => ({ label: c, items: byCat.get(c)!, total: byCat.get(c)!.reduce((a, e) => a + e.amount, 0) }));
+    }, [expenses]);
+
+    const save = (e: Expense) => setFinances(prev => ({
+        ...prev,
+        expenses: prev.expenses.some(x => x.id === e.id) ? prev.expenses.map(x => (x.id === e.id ? { ...x, ...e } : x)) : [...prev.expenses, e],
+    }));
+    const remove = (id: string) => setFinances(prev => ({ ...prev, expenses: prev.expenses.filter(e => e.id !== id) }));
+    const open = (e?: Expense) => { setEditing(e); setSheetOpen(true); };
+
+    const shownTx = tx.transactions.filter(t => (txFilter === 'all' ? true : txFilter === 'spending' ? t.amount > 0 : t.amount < 0)).slice(0, 60);
 
     return (
         <Screen>
@@ -54,126 +64,128 @@ const BudgetScreen: React.FC = () => {
             <Card gap="xs" pad="roomy">
                 <Text variant="label" color="textMuted">Left over each month after bills and minimums</Text>
                 <Text variant="hero" color={monthlyLeftoverMoney < 0 ? 'risk' : 'accent'}>{money(monthlyLeftoverMoney)}</Text>
-                <Text variant="label" color="textMuted">{money(finances.monthlyNetIncome)} income − {money(monthlyExpensesTotal)} bills − {money(monthlyDebtPayments)} minimums</Text>
+                <Text variant="label" color="textMuted">{money(finances.monthlyNetIncome)} income − {money(monthlyExpensesTotal)} expenses − {money(monthlyDebtPayments)} debt minimums</Text>
             </Card>
 
-            {loaded && !isSample && banks.length === 0 ? (
-                <Card tone="mint" gap="md">
-                    <Inline align="flex-start" gap="md">
-                        <Icon name="bank" color="accent" />
-                        <Stack gap="xs" style={{ flex: 1 }}>
-                            <Text variant="h3">Connect a bank</Text>
-                            <Text variant="small" color="textMuted">Skip the typing. We’ll fill in income and bills and keep them current.</Text>
-                        </Stack>
-                    </Inline>
-                    <PlaidLinkButton size="md" />
-                </Card>
+            <SegTabs label="Budget sections" value={tab} options={[{ value: 'summary', label: 'Summary' }, { value: 'income', label: 'Income' }, { value: 'expenses', label: 'Expenses' }]} onChange={setTab} />
+
+            {tab === 'summary' ? (
+                <Grid min={360}>
+                    <Stack gap="lg">
+                        {finances.monthlyNetIncome > 0 ? (
+                            <Section title="Where your money goes" right={<Text variant="small" color="textMuted">per month</Text>}>
+                                <Card gap="md">
+                                    <StackedBar label="Your monthly take-home pay split into expenses, debt payments, extra and what is left" segments={slices.map(sl => ({ key: sl.key, share: sl.share, color: sl.color }))} height={18} />
+                                    <Stack gap="sm">
+                                        {slices.map(sl => (
+                                            <Inline key={sl.key} justify="space-between" gap="md">
+                                                <Inline gap="sm" style={{ flex: 1 }}><Dot color={sl.color} /><Text variant="small" numberOfLines={1} style={{ flex: 1 }}>{sl.label}</Text></Inline>
+                                                <Text variant="small" color="textMuted">{`${Math.round(sl.share * 100)}%`}</Text>
+                                                <Text variant="smallStrong" style={{ minWidth: 76, textAlign: 'right' }}>{money(sl.amount)}</Text>
+                                            </Inline>
+                                        ))}
+                                    </Stack>
+                                    {alloc.overspent > 0 ? <Text variant="small" color="risk">Expenses and minimums are {money(alloc.overspent)} more than your income, so this is scaled to fit. Check that every entry is monthly.</Text> : null}
+                                </Card>
+                            </Section>
+                        ) : (
+                            <Card tone="amber" gap="sm"><Text variant="small">Add your income to see where your money goes.</Text><Button compact onPress={() => setTab('income')}>Add income</Button></Card>
+                        )}
+                    </Stack>
+                    <Stack gap="lg">
+                        {bankLinked && history.length >= 2 ? (
+                            <Section title={`Income vs expenses, last ${history.length} months`}>
+                                <Card gap="md">
+                                    <BarChart label="Income and expenses by month, from your bank" colors={[colors.accent, colors.series[2]]} groups={history.map(m => ({ label: monthName(m.month), values: [m.income, m.expenses] }))} />
+                                    <Legend items={[{ label: 'Income', color: colors.accent }, { label: 'Expenses', color: colors.series[2] }]} />
+                                </Card>
+                            </Section>
+                        ) : (
+                            <Card tone="outline" gap="sm">
+                                <Text variant="bodyStrong">Income vs expenses over time</Text>
+                                <Text variant="small" color="textMuted">Connect a bank to see this month by month. We use the real dates of your deposits and spending, which can’t be entered by hand.</Text>
+                                {loaded && !isSample && banks.length === 0 ? <PlaidLinkButton size="md" variant="secondary" /> : null}
+                            </Card>
+                        )}
+                    </Stack>
+                </Grid>
             ) : null}
 
-            {finances.monthlyNetIncome > 0 ? (
-                <Section title="Where your money goes" right={<Text variant="small" color="textMuted">per month</Text>}>
-                    <Card gap="md">
-                        <StackedBar label="Your monthly take-home pay split into bills, debt payments, extra and what is left" segments={slices.map(sl => ({ key: sl.key, share: sl.share, color: sl.color }))} height={18} />
-                        <Stack gap="sm">
-                            {slices.map(sl => (
-                                <Inline key={sl.key} justify="space-between" gap="md">
-                                    <Inline gap="sm" style={{ flex: 1 }}><Dot color={sl.color} /><Text variant="small" numberOfLines={1} style={{ flex: 1 }}>{sl.label}</Text></Inline>
-                                    <Text variant="small" color="textMuted">{`${Math.round(sl.share * 100)}%`}</Text>
-                                    <Text variant="smallStrong" style={{ minWidth: 76, textAlign: 'right' }}>{money(sl.amount)}</Text>
-                                </Inline>
-                            ))}
-                        </Stack>
-                        {money_.overspent > 0 ? <Text variant="small" color="risk">Bills and minimums are {money(money_.overspent)} more than your income, so this chart is scaled to fit. Check your entries are monthly.</Text> : null}
-                    </Card>
-                </Section>
-            ) : null}
+            {tab === 'income' ? <IncomeCard /> : null}
 
-            <Grid min={360}>
+            {tab === 'expenses' ? (
                 <Stack gap="lg">
-                    <Section title="Income" right={<Text variant="small" color="textMuted">{banks.length ? 'Bank + manual' : 'Manual'}</Text>}>
-                        <IncomeCard />
-                    </Section>
+                    <Inline justify="space-between" gap="md">
+                        <Stack gap="xs"><Text variant="h3">All your expenses</Text><Text variant="small" color="textMuted">{money(monthlyExpensesTotal)} a month · everything you’ve entered or imported</Text></Stack>
+                        <Button compact onPress={() => open()}>+ Add expense</Button>
+                    </Inline>
 
-                    {history.length >= 2 ? (
-                        <Section title="Income vs bills, last 12 months">
+                    {grouped.length === 0 ? (
+                        <Card gap="md">
+                            <Text color="textMuted">No expenses yet. Add what you pay each month (rent, utilities, groceries, subscriptions) so your leftover money is accurate.</Text>
+                            <Button onPress={() => open()}>+ Add your first expense</Button>
+                            {!isSample ? <PlaidLinkButton size="md" variant="secondary">Or import from a bank</PlaidLinkButton> : null}
+                        </Card>
+                    ) : (
+                        <Grid min={340}>
+                            {grouped.map(g => (
+                                <Card key={g.label} gap="sm">
+                                    <Inline justify="space-between"><Text variant="bodyStrong">{g.label}</Text><Text variant="smallStrong" color="textMuted">{money(g.total)}</Text></Inline>
+                                    {g.items.map(e => {
+                                        const isTax = e.id.startsWith('property-tax-');
+                                        return (
+                                            <Inline key={e.id} justify="space-between" gap="md">
+                                                <Stack gap="xs" style={{ flex: 1 }}>
+                                                    <Text numberOfLines={1}>{isTax ? 'Property tax' : e.name === 'Monthly bills' && e.id === 'fixed-total' ? 'Monthly bills (total)' : e.name}</Text>
+                                                    {e.plaidItemId ? <Badge>From bank</Badge> : isTax ? <Text variant="caption" color="textMuted">Set on your mortgage in <Link href="/debts"><Text variant="caption" color="accent">Debts</Text></Link></Text> : null}
+                                                </Stack>
+                                                <Text variant="bodyStrong">{money(e.amount)}</Text>
+                                                {!isTax ? (
+                                                    <Inline gap="sm">
+                                                        <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${e.name}`} hitSlop={10} onPress={() => open(e)}><Icon name="edit" size={18} color="textMuted" /></Pressable>
+                                                        <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${e.name}`} hitSlop={10} onPress={() => remove(e.id)}><Icon name="close" size={18} color="textMuted" /></Pressable>
+                                                    </Inline>
+                                                ) : null}
+                                            </Inline>
+                                        );
+                                    })}
+                                </Card>
+                            ))}
+                        </Grid>
+                    )}
+
+                    <Section title="Transactions">
+                        {bankLinked ? (
                             <Card gap="md">
-                                <BarChart label="Take-home pay and bills by month" colors={[colors.accent, colors.series[2]]} groups={history.map(m => ({ label: new Date(`${m.month}-15T12:00:00`).toLocaleDateString('en-US', { month: 'short' }), values: [m.income, m.expenses] }))} />
-                                <Legend items={[{ label: 'Income', color: colors.accent }, { label: 'Bills', color: colors.series[2] }]} />
-                            </Card>
-                        </Section>
-                    ) : null}
-
-                    <Section title="Assets" right={<Text variant="small" color="textMuted">{money(assets.reduce((a, x) => a + x.value, 0))}</Text>}>
-                        {assets.map(a => (
-                            <Card key={a.id} gap="sm">
-                                <Inline justify="space-between" gap="sm">
-                                    <Stack style={{ flex: 1 }}><Field inline label="Asset name" value={a.name} onChange={v => setAsset(a.id, { name: v })} /></Stack>
-                                    {a.plaidItemId ? <Badge>From bank</Badge> : null}
-                                    <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${a.name}`} hitSlop={10} onPress={() => setFinances(p => ({ ...p, assets: (p.assets ?? []).filter(x => x.id !== a.id) }))}><Icon name="close" size={20} color="textMuted" /></Pressable>
+                                <Inline wrap gap="sm">
+                                    {([['all', 'All'], ['spending', 'Spending'], ['income', 'Income']] as const).map(([v, l]) => <Chip key={v} active={txFilter === v} onPress={() => setTxFilter(v)}>{l}</Chip>)}
                                 </Inline>
-                                <Inline gap="sm">
-                                    <Select inline label="Asset type" value={a.type} options={ASSET_TYPES} onChange={t => setAsset(a.id, { type: t })} />
-                                    <Field inline label={`${a.name} value`} prefix="$" numeric value={a.value} onChange={v => setAsset(a.id, { value: toNumber(v) })} />
-                                </Inline>
+                                {tx.loading ? <Text variant="small" color="textMuted">Loading your transactions…</Text> : null}
+                                {tx.error ? <Text variant="small" color="risk">{tx.error}</Text> : null}
+                                {!tx.loading && !tx.error && shownTx.length === 0 ? <Text variant="small" color="textMuted">No transactions found for the last 60 days.</Text> : null}
+                                {shownTx.map(t => (
+                                    <Inline key={t.id} justify="space-between" gap="md">
+                                        <Stack gap="xs" style={{ flex: 1 }}>
+                                            <Text variant="small" numberOfLines={1}>{t.name}</Text>
+                                            <Text variant="caption" color="textMuted">{fullDate(t.date)}{t.account ? ` · ${t.account}` : ''}</Text>
+                                        </Stack>
+                                        <Text variant="smallStrong" color={t.amount < 0 ? 'accent' : 'text'}>{t.amount < 0 ? '+' : '−'}{money(Math.abs(t.amount), { cents: true })}</Text>
+                                    </Inline>
+                                ))}
+                                {tx.transactions.length > 60 ? <Text variant="caption" color="textMuted">Showing the 60 most recent.</Text> : null}
                             </Card>
-                        ))}
-                        <Button variant="secondary" onPress={() => setFinances(p => ({ ...p, assets: [...(p.assets ?? []), { id: `asset-${Date.now()}`, name: 'New asset', type: AssetType.Cash, value: 0 }] }))}>+ Add an asset</Button>
+                        ) : (
+                            <Card tone="outline" gap="sm">
+                                <Text variant="small" color="textMuted">Every transaction, with dates, is available when you connect a bank. In manual mode you see the monthly amounts you entered above.</Text>
+                                {!isSample ? <PlaidLinkButton size="md" variant="secondary" /> : null}
+                            </Card>
+                        )}
                     </Section>
                 </Stack>
+            ) : null}
 
-                <Section title="Fixed expenses" right={<Text variant="small" color="textMuted">{money(monthlyExpensesTotal)}/mo</Text>}>
-                    <Card gap="md">
-                        <Inline><Field label="Monthly bills (rent, utilities, insurance…)" prefix="$" numeric value={amountOf(FIXED_ID) || ''} placeholder="0" hint="One number is enough. Anything in the breakdown below is added on top. Loan payments (mortgage, auto, student, cards) belong in Debts, not here." onChange={v => setExpense(FIXED_ID, 'Monthly bills', toNumber(v))} /></Inline>
-                    </Card>
-
-                    {otherBills.map(e => (
-                        <Card key={e.id} gap="sm">
-                            <Inline justify="space-between" gap="md">
-                                <Stack gap="xs" style={{ flex: 1 }}><Text numberOfLines={1}>{e.name}</Text>{e.plaidItemId ? <Badge>From bank</Badge> : null}</Stack>
-                                <Stack style={{ width: 120 }}><Field inline label={`${e.name} amount`} prefix="$" numeric value={e.amount} onChange={v => setExpense(e.id, e.name, toNumber(v))} /></Stack>
-                                {!e.id.startsWith('property-tax-') ? <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${e.name}`} hitSlop={10} onPress={() => removeExpense(e.id)}><Icon name="close" size={20} color="textMuted" /></Pressable> : null}
-                            </Inline>
-                        </Card>
-                    ))}
-
-                    <TextButton onPress={() => setShowBreakdown(s => !s)}>{showBreakdown ? 'Hide detailed breakdown' : `Detailed breakdown (optional)${breakdownTotal > 0 ? ` · ${money(breakdownTotal)}` : ''}`}</TextButton>
-                    {showBreakdown ? EXPENSE_CATEGORIES.map(cat => {
-                        const total = cat.subcategories.reduce((a, s) => a + amountOf(s.name), 0);
-                        const open = openCat === cat.id;
-                        return (
-                            <Card key={cat.id} gap="md">
-                                <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={() => setOpenCat(open ? null : cat.id)} style={{ minHeight: 28, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Text variant="bodyStrong">{cat.label}</Text>
-                                    <Text variant="small" color="textMuted">{money(total)} {open ? '▴' : '▾'}</Text>
-                                </Pressable>
-                                {open ? cat.subcategories.map(s => (
-                                    <Inline key={s.name}><Field label={s.name} prefix="$" numeric value={amountOf(s.name) || ''} placeholder="0" hint={s.placeholder} onChange={v => setExpense(s.name, s.name, toNumber(v))} /></Inline>
-                                )) : null}
-                            </Card>
-                        );
-                    }) : null}
-                    <AddBill onAdd={(name, amount) => setExpense(`custom-${Date.now()}`, name, amount)} />
-                </Section>
-            </Grid>
+            <AddExpenseSheet open={sheetOpen} onClose={() => setSheetOpen(false)} expense={editing} onSave={save} />
         </Screen>
-    );
-};
-
-const AddBill: React.FC<{ onAdd: (name: string, amount: number) => void }> = ({ onAdd }) => {
-    const [open, setOpen] = useState(false);
-    const [name, setName] = useState('');
-    const [amount, setAmount] = useState('');
-    if (!open) return <Button variant="secondary" onPress={() => setOpen(true)}>+ Add another bill</Button>;
-    const reset = () => { setOpen(false); setName(''); setAmount(''); };
-    return (
-        <Card gap="md">
-            <Inline><Field label="Name" value={name} onChange={setName} placeholder="e.g. Gym" /></Inline>
-            <Inline><Field label="Monthly amount" prefix="$" numeric value={amount} onChange={setAmount} /></Inline>
-            <Inline gap="md">
-                <Button compact disabled={!name.trim() || toNumber(amount) <= 0} onPress={() => { onAdd(name.trim(), toNumber(amount)); reset(); }}>Add</Button>
-                <Button variant="ghost" compact onPress={reset}>Cancel</Button>
-            </Inline>
-        </Card>
     );
 };
 
