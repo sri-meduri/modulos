@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { PanResponder, View } from 'react-native';
+import { PanResponder, Pressable, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { colors, radius, space } from '../../theme';
 import { Text } from './Text';
@@ -94,14 +94,47 @@ export const Avatar: React.FC<{ letter: string; size?: number }> = ({ letter, si
     </View>
 );
 
-export interface Segment { key: string; share: number; color: string }
+export interface Segment {
+    key: string;
+    share: number;
+    color: string;
+    /** Shown in the detail line when the segment is hovered (web) or tapped (phone). */
+    label?: string;
+    /** Extra detail after the percentage, e.g. the dollar amount. */
+    detail?: string;
+}
 
-/** One horizontal bar split into proportional segments (e.g. where your money goes). */
-export const StackedBar: React.FC<{ segments: Segment[]; label: string; height?: number }> = ({ segments, label, height = 16 }) => (
-    <View accessibilityRole="image" accessibilityLabel={label} style={{ flexDirection: 'row', height, borderRadius: radius.pill, overflow: 'hidden', backgroundColor: colors.surface, gap: 2 }}>
-        {segments.filter(s => s.share > 0).map(s => <View key={s.key} style={{ flex: s.share, backgroundColor: s.color }} />)}
-    </View>
-);
+/**
+ * One horizontal bar split into proportional segments (e.g. where your money goes).
+ * Hover a segment on the web, or tap it on a phone, to see its name, share and amount.
+ */
+export const StackedBar: React.FC<{ segments: Segment[]; label: string; height?: number }> = ({ segments, label, height = 16 }) => {
+    const [active, setActive] = useState<string | null>(null);
+    const shown = segments.filter(s => s.share > 0);
+    const current = shown.find(s => s.key === active);
+    return (
+        <View style={{ gap: space.sm }}>
+            <View accessibilityRole="image" accessibilityLabel={label} style={{ flexDirection: 'row', height, borderRadius: radius.pill, overflow: 'hidden', backgroundColor: colors.surface, gap: 2 }}>
+                {shown.map(s => (
+                    <Pressable key={s.key} accessibilityRole="button" accessibilityLabel={s.label ? `${s.label}, ${Math.round(s.share * 100)} percent${s.detail ? `, ${s.detail}` : ''}` : undefined}
+                        onHoverIn={() => setActive(s.key)} onHoverOut={() => setActive(null)} onPress={() => setActive(a => (a === s.key ? null : s.key))}
+                        style={{ flex: s.share, backgroundColor: s.color, opacity: active && active !== s.key ? 0.4 : 1 }} />
+                ))}
+            </View>
+            {shown.some(s => s.label) ? (
+                <View style={{ minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+                    {current ? (
+                        <>
+                            <Dot color={current.color} />
+                            <Text variant="smallStrong" numberOfLines={1} style={{ flexShrink: 1 }}>{current.label}</Text>
+                            <Text variant="small" color="textMuted">{`· ${Math.round(current.share * 100)}%${current.detail ? ` · ${current.detail}` : ''}`}</Text>
+                        </>
+                    ) : <Text variant="caption" color="textMuted">Hover or tap a segment for details</Text>}
+                </View>
+            ) : null}
+        </View>
+    );
+};
 
 /** Small color swatch used in legends. */
 export const Dot: React.FC<{ color: string; size?: number }> = ({ color, size = 10 }) => (

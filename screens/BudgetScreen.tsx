@@ -40,7 +40,7 @@ const BudgetScreen: React.FC = () => {
     const expenses = finances.expenses.filter(e => e.amount > 0);
     const alloc = allocateIncome(finances.monthlyNetIncome, finances.expenses, monthlyDebtPayments, settings.extraPayment ?? 0);
     const kindColor = { debt: colors.series[2], extra: colors.accent, left: colors.accentDeep } as const;
-    const billColors = [colors.series[3], colors.series[4], colors.series[5], colors.line, colors.textMuted];
+    const billColors = colors.categories;
     let billIdx = 0;
     const slices = alloc.slices.map(sl => ({ ...sl, color: sl.kind === 'bills' ? billColors[billIdx++ % billColors.length] : kindColor[sl.kind] }));
 
@@ -89,7 +89,7 @@ const BudgetScreen: React.FC = () => {
                         {finances.monthlyNetIncome > 0 ? (
                             <Section title="Where your money goes" right={<Text variant="small" color="textMuted">per month</Text>}>
                                 <Card gap="md">
-                                    <StackedBar label="Your monthly take-home pay split into expenses, debt payments, extra and what is left" segments={slices.map(sl => ({ key: sl.key, share: sl.share, color: sl.color }))} height={18} />
+                                    <StackedBar label="Your monthly take-home pay split into expenses, debt payments, extra and what is left" segments={slices.map(sl => ({ key: sl.key, share: sl.share, color: sl.color, label: sl.label, detail: money(sl.amount) }))} height={18} />
                                     <Stack gap="sm">
                                         {slices.map(sl => (
                                             <Inline key={sl.key} justify="space-between" gap="md">

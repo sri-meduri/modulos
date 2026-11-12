@@ -6,11 +6,13 @@ import { useAuth } from '../../contexts/AuthContext';
 import { FinanceProvider, useFinance } from '../../contexts/FinanceContext';
 import { BottomBar, ContentColumn, MobileHeader, SampleBanner, Sidebar, Splash, useShellMode } from '../../components/Shell';
 import LoginScreen from '../../screens/LoginScreen';
+import { useDailyBankSync } from '../../hooks/useDailyBankSync';
 import OnboardingScreen from '../../screens/OnboardingScreen';
 
 const Shell: React.FC = () => {
-    const { loading, settings, finances } = useFinance();
-    const { isSample } = useAuth();
+    const { loading, settings, finances, bankLinked } = useFinance();
+    const { isSample, user, isGuest } = useAuth();
+    useDailyBankSync(!!user && !isGuest && bankLinked && !loading);
     const mode = useShellMode();
     if (loading) return <Splash />;
 

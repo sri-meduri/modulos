@@ -62,6 +62,8 @@ export const colors = {
 
     /** Categorical series (charts): first color is always the brand accent. */
     series: ['#22F0C2', '#F5C26B', '#60A5FA', '#C084FC', '#F472B6', '#94A3B8'] as readonly string[],
+    /** Ten distinct colors for categories (expenses by category). Avoids the accent, amber and risk meanings. */
+    categories: ['#C084FC', '#F472B6', '#94A3B8', '#38BDF8', '#A78BFA', '#FB7185', '#4ADE80', '#E879F9', '#22D3EE', '#818CF8'] as readonly string[],
 } as const;
 
-export type ColorToken = Exclude<keyof typeof colors, 'series'>;
+export type ColorToken = Exclude<keyof typeof colors, 'series' | 'categories'>;

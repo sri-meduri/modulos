@@ -6,7 +6,7 @@ import { simulatePayoff, addMonths, formatMonthYear, formatDuration } from '../s
 import { Loan, LoanType } from '../types';
 import { money } from '../lib/format';
 import { openUrl } from '../lib/links';
-import { Band, Button, Card, Chart, Grid, Icon, Inline, Slider, Stack, Text, TextButton } from '../components/ui';
+import { Band, Button, Card, Chart, checkpoints, Grid, Legend, Icon, Inline, Slider, Stack, Text, TextButton } from '../components/ui';
 
 const logo = require('../assets/logo.png');
 
@@ -51,13 +51,20 @@ const LandingScreen: React.FC<Props> = ({ onSignIn, onSignUp, onTrySample }) => 
     const demo = useMemo(() => ({ base: simulatePayoff(DEMO_LOANS, 0), plan: simulatePayoff(DEMO_LOANS, extra) }), [extra]);
     const timeSaved = demo.base.months - demo.plan.months;
     const interestSaved = demo.base.totalInterest - demo.plan.totalInterest;
-    const series = useMemo(() => {
-        const n = demo.plan.months;
-        const stride = Math.max(1, Math.ceil(n / 30));
-        const data: number[] = [];
-        for (let i = 0; i <= n; i += stride) data.push(demo.plan.balanceSeries[i] ?? 0);
-        return data;
-    }, [demo.plan]);
+    // Same before/after chart as the Plan page: both lines share one axis (the minimums-only
+    // horizon), so moving the slider visibly pulls the green line down and to the left.
+    const chart = useMemo(() => {
+        const horizon = demo.base.months;
+        const stride = Math.max(1, Math.ceil(horizon / 40));
+        const idx: number[] = [];
+        for (let i = 0; i <= horizon; i += stride) idx.push(i);
+        if (idx[idx.length - 1] !== horizon) idx.push(horizon);
+        return {
+            minimums: idx.map(i => demo.base.balanceSeries[Math.min(i, demo.base.months)] ?? 0),
+            withExtra: idx.map(i => demo.plan.balanceSeries[Math.min(i, demo.plan.months)] ?? 0),
+            ticks: checkpoints(idx.map(i => formatMonthYear(addMonths(i))), 4),
+        };
+    }, [demo]);
 
     return (
         <ScrollView ref={scroller} style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -94,7 +101,9 @@ const LandingScreen: React.FC<Props> = ({ onSignIn, onSignUp, onTrySample }) => 
                                 <Inline justify="space-between"><Text variant="label" color="textMuted">Extra monthly payment</Text><Text variant="smallStrong" color="accent">{money(extra)}</Text></Inline>
                                 <Slider label="Extra monthly payment" value={extra} min={0} max={MAX_EXTRA} step={25} onChange={setExtra} valueText={money(extra)} />
                             </Stack>
-                            <Chart height={140} series={[{ data: series, color: colors.accent, fill: true }]} label="Demo debt balance over time" />
+                            <Legend items={[{ label: 'Minimums only', color: colors.textMuted }, { label: `With ${money(extra)} extra`, color: colors.accent }]} />
+                            <Chart height={190} xTicks={chart.ticks} label="Demo debt balance with and without an extra payment"
+                                series={[{ data: chart.minimums, color: colors.textMuted, width: 2.5 }, { data: chart.withExtra, color: colors.accent }]} />
                         </Card>
                     </View>
                 </View>

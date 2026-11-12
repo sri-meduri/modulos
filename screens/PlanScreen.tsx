@@ -37,7 +37,6 @@ const PlanScreen: React.FC = () => {
     const { isGuest, isSample, openAuth } = useAuth();
     const { finances, settings, setSettings, activeLoans, consideringLoans, paidOffLoans, monthlyLeftoverMoney } = useFinance();
     const plan = usePlan();
-    const [payView, setPayView] = useState<'total' | 'debt'>('total');
     const [whatIfKind, setWhatIfKind] = useState<'loan' | 'refi'>('loan');
     const [includeIds, setIncludeIds] = useState<string[]>([]);
     const [refiId, setRefiId] = useState('');
@@ -58,17 +57,13 @@ const PlanScreen: React.FC = () => {
     const paySegments = useMemo(() => {
         const total = (plan.plan.totalMinimum + extra) || 1;
         const out: { key: string; label: string; amount: number; share: number; color: string }[] = [];
-        if (payView === 'total') {
-            out.push({ key: 'min', label: 'Minimum payments', amount: plan.plan.totalMinimum, share: plan.plan.totalMinimum / total, color: colors.series[2] });
-        } else {
-            plan.plan.order.forEach((id, k) => {
-                const l = activeLoans.find(x => x.id === id);
-                if (l) { const amt = getEffectiveMinPayment(l); out.push({ key: id, label: `${l.name} minimum`, amount: amt, share: amt / total, color: colors.series[(k + 2) % colors.series.length] }); }
-            });
-        }
+        plan.plan.order.forEach((id, k) => {
+            const l = activeLoans.find(x => x.id === id);
+            if (l) { const amt = getEffectiveMinPayment(l); out.push({ key: id, label: `${l.name} minimum`, amount: amt, share: amt / total, color: colors.series[(k + 2) % colors.series.length] }); }
+        });
         if (extra > 0) out.push({ key: 'extra', label: 'Extra payment', amount: extra, share: extra / total, color: colors.accent });
         return out;
-    }, [activeLoans, plan, extra, payView]);
+    }, [activeLoans, plan, extra]);
 
     // Before/after chart with a rounded balance axis and a few month checkpoints.
     const horizon = Math.max(plan.baseline.months, plan.plan.months);
@@ -180,8 +175,7 @@ const PlanScreen: React.FC = () => {
 
                     <Card gap="md">
                         <Inline justify="space-between"><Text variant="h3">Monthly payment</Text><Text variant="stat">{money(plan.plan.totalMinimum + extra)}</Text></Inline>
-                        <SegTabs label="Payment breakdown" value={payView} options={[{ value: 'total', label: 'Minimum + extra' }, { value: 'debt', label: 'By debt' }]} onChange={setPayView} />
-                        <StackedBar label="How your monthly debt payment is made up" segments={paySegments} />
+                        <StackedBar label="How your monthly debt payment is made up" segments={paySegments.map(seg => ({ key: seg.key, share: seg.share, color: seg.color, label: seg.label, detail: money(seg.amount) }))} />
                         <Stack gap="sm">
                             {paySegments.map(seg => (
                                 <Inline key={seg.key} justify="space-between" gap="md">
@@ -305,6 +299,12 @@ const PlanScreen: React.FC = () => {
                             ) : null}
                         </Card>
                     </Section>
+
+                    <Card gap="md" style={{ opacity: 0.55 }} accessibilityState={{ disabled: true }}>
+                        <Inline justify="space-between" gap="md"><Text variant="h3">Put it into action</Text><Badge tone="amber">Coming soon</Badge></Inline>
+                        <Text variant="small" color="textMuted">Sign in to get a monthly payment schedule, calendar reminders and an autopay checklist for this plan.</Text>
+                        <Button variant="secondary" disabled>Coming soon</Button>
+                    </Card>
                 </Stack>
             </Grid>
         </Screen>

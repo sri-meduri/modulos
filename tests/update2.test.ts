@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { effectiveGrossIncome } from '../services/income';
-import { groupAssets, netWorthTimeline, recordAssetSnapshot, retirementPerformance } from '../services/assets';
+import { elapsedLabel, groupAssets, netWorthTimeline, recordAssetSnapshot, retirementPerformance, snapshotLabel, snapshots, spanOf } from '../services/assets';
 import { projectRetirement } from '../services/retirement';
 import { compactMoney, niceTicks } from '../lib/format';
 import { formatDuration } from '../services/payoff';
@@ -48,20 +48,45 @@ describe('assets', () => {
         expect(g[1].count).toBe(2);
         expect(g.reduce((a, x) => a + x.share, 0)).toBeCloseTo(1, 6);
     });
-    it('records snapshots only for bank-linked assets, once per month, and computes performance', () => {
+    it('records a daily snapshot only once a bank is linked, and computes performance', () => {
         const manual = f({ assets: [{ id: '1', name: '401k', type: AssetType.Retirement, value: 50000 }] });
         expect(recordAssetSnapshot(manual)).toBe(manual);
         const linked = f({ assets: [{ id: 'a', name: '401k', type: AssetType.Retirement, value: 50000, plaidItemId: 'i' }] });
-        const s1 = recordAssetSnapshot(linked, new Date(2026, 8, 15));
-        expect(s1.assetHistory).toEqual([{ month: '2026-09', total: 50000, retirement: 50000, net: 50000 }]);
-        expect(recordAssetSnapshot(s1, new Date(2026, 8, 20))).toBe(s1);
-        const later = recordAssetSnapshot({ ...s1, assets: [{ ...linked.assets![0], value: 55000 }] }, new Date(2026, 10, 3));
+        const s1 = recordAssetSnapshot(linked, new Date(2026, 10, 1));
+        expect(s1.assetHistory).toEqual([{ date: '2026-11-01', total: 50000, retirement: 50000, net: 50000 }]);
+        // Same day, nothing changed: no new save.
+        expect(recordAssetSnapshot(s1, new Date(2026, 10, 1, 18))).toBe(s1);
+        // Next day, nothing changed: a new point is still added so the line is continuous.
+        const day2 = recordAssetSnapshot(s1, new Date(2026, 10, 2));
+        expect(day2.assetHistory).toHaveLength(2);
+        // Same day, value moved: that day's point is updated rather than duplicated.
+        const moved = recordAssetSnapshot({ ...day2, assets: [{ ...linked.assets![0], value: 52000 }] }, new Date(2026, 10, 2, 9));
+        expect(moved.assetHistory).toHaveLength(2);
+        const later = recordAssetSnapshot({ ...moved, assets: [{ ...linked.assets![0], value: 55000 }] }, new Date(2026, 10, 12));
         const perf = retirementPerformance(later)!;
         expect(perf.change).toBe(5000);
         expect(perf.percent).toBeCloseTo(0.1, 6);
-        expect(perf.months).toBe(1);
+        expect(perf.days).toBe(11);
         expect(retirementPerformance(s1)).toBeNull();
-        expect(netWorthTimeline(later).map(p => p.net)).toEqual([50000, 55000]);
+        expect(netWorthTimeline(later).map(p => p.net)).toEqual([50000, 52000, 55000]);
+    });
+    it('reads older monthly entries as mid-month and upgrades them to daily', () => {
+        const legacy = f({
+            assets: [{ id: 'a', name: '401k', type: AssetType.Retirement, value: 60000, plaidItemId: 'i' }],
+            assetHistory: [{ month: '2026-09', total: 50000, retirement: 50000, net: 50000 }],
+        });
+        expect(snapshots(legacy)[0].date).toBe('2026-09-15');
+        const upgraded = recordAssetSnapshot(legacy, new Date(2026, 10, 1));
+        expect(upgraded.assetHistory!.every(h => h.date && !h.month)).toBe(true);
+        expect(upgraded.assetHistory).toHaveLength(2);
+    });
+    it('labels snapshots and spans in whole words', () => {
+        expect(elapsedLabel(1)).toBe('1 day');
+        expect(elapsedLabel(12)).toBe('12 days');
+        expect(elapsedLabel(95)).toBe('3 months');
+        expect(snapshotLabel('2026-11-12', 30)).toBe('Nov 12');
+        expect(snapshotLabel('2026-11-12', 300)).toBe('Nov 2026');
+        expect(spanOf(['2026-11-01', '2026-11-12'])).toBe(11);
     });
     it('net worth subtracts active debt and counts manual assets too', () => {
         const f2 = f({

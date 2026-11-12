@@ -2,9 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { Pressable } from 'react-native';
 import { colors } from '../theme';
 import { useFinance } from '../contexts/FinanceContext';
-import { groupAssets, netWorthTimeline, retirementPerformance } from '../services/assets';
+import { elapsedLabel, groupAssets, netWorthTimeline, retirementPerformance, snapshotLabel, snapshots, spanOf } from '../services/assets';
 import { projectRetirement, RETURN_PRESETS } from '../services/retirement';
-import { formatMonthYear } from '../services/payoff';
 import { Asset, AssetType } from '../types';
 import { compactMoney, money, pct, toNumber } from '../lib/format';
 import { Badge, Button, Card, Chart, checkpoints, Chip, Dot, Field, Grid, Icon, Inline, PageTitle, Row, Screen, Section, Select, Stack, StackedBar, Text } from '../components/ui';
@@ -13,17 +12,26 @@ import BankGate from '../components/BankGate';
 const TYPES = Object.values(AssetType).map(t => ({ value: t, label: t }));
 const TYPE_COLOR: Record<string, string> = Object.fromEntries(Object.values(AssetType).map((t, i) => [t, colors.series[i % colors.series.length]]));
 
-const monthLabel = (key: string) => { const [y, m] = key.split('-').map(Number); return formatMonthYear(new Date(y, m - 1, 1)); };
+/** Thin a long daily series to about 60 points so it stays smooth and quick to draw. */
+const thin = <T,>(items: T[], max = 60): T[] => {
+    if (items.length <= max) return items;
+    const stride = Math.ceil(items.length / max);
+    const out = items.filter((_, i) => i % stride === 0);
+    if (out[out.length - 1] !== items[items.length - 1]) out.push(items[items.length - 1]);
+    return out;
+};
 
-/** A line/area chart of one value per month with a $ axis and month checkpoints. */
-const MonthlyLine: React.FC<{ points: { month: string; value: number }[]; label: string }> = ({ points, label }) => (
-    <Chart height={180} label={label} xTicks={checkpoints(points.map(p => monthLabel(p.month)), 4)} series={[{ data: points.map(p => p.value), color: colors.accent, fill: true }]} />
-);
+/** A line/area chart of one value per day with a $ axis and a few labelled checkpoints. */
+const TimeLine: React.FC<{ points: { date: string; value: number }[]; label: string }> = ({ points, label }) => {
+    const pts = thin(points);
+    const span = spanOf(pts.map(p => p.date));
+    return <Chart height={180} label={label} xTicks={checkpoints(pts.map(p => snapshotLabel(p.date, span)), 4)} series={[{ data: pts.map(p => p.value), color: colors.accent, fill: true }]} />;
+};
 
-/** Last `n` month keys ending this month, oldest first. */
-const lastMonths = (n: number): string[] => Array.from({ length: n }, (_, i) => {
-    const d = new Date(new Date().getFullYear(), new Date().getMonth() - (n - 1 - i), 1);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+/** Last `n` days ending today, oldest first, as YYYY-MM-DD (used for the locked previews). */
+const lastDays = (n: number): string[] => Array.from({ length: n }, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() - (n - 1 - i));
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 });
 
 const AssetsScreen: React.FC = () => {
@@ -33,7 +41,7 @@ const AssetsScreen: React.FC = () => {
     const timeline = useMemo(() => netWorthTimeline(finances), [finances]);
     const perf = useMemo(() => retirementPerformance(finances), [finances]);
     const retirementLinked = assets.filter(a => a.plaidItemId && a.type === AssetType.Retirement);
-    const retirementHistory = (finances.assetHistory ?? []).filter(h => h.retirement > 0);
+    const retirementHistory = snapshots(finances).filter(h => h.retirement > 0);
     const setAsset = (id: string, patch: Partial<Asset>) => setFinances(prev => ({ ...prev, assets: (prev.assets ?? []).map(a => (a.id === id ? { ...a, ...patch } : a)) }));
 
     // Retirement predictor: starts from what the user already has, every field editable.
@@ -51,9 +59,9 @@ const AssetsScreen: React.FC = () => {
     const years = proj.yearly.length - 1;
 
     // Illustrative previews for the locked charts (dimmed behind the overlay).
-    const months12 = lastMonths(12);
-    const demoNet = months12.map((month, i) => ({ month, value: Math.round(Math.max(1000, (netWorth || 50000) * (0.82 + (0.18 * i) / 11) + Math.sin(i * 1.7) * Math.abs(netWorth || 50000) * 0.015)) }));
-    const demoRetire = months12.map((month, i) => ({ month, value: Math.round((retirementNow || 60000) * (0.88 + (0.12 * i) / 11) + Math.sin(i * 1.3) * 1200) }));
+    const days = lastDays(60);
+    const demoNet = days.map((date, i) => ({ date, value: Math.round(Math.max(1000, (netWorth || 50000) * (0.94 + (0.06 * i) / 59) + Math.sin(i / 3) * Math.abs(netWorth || 50000) * 0.008)) }));
+    const demoRetire = days.map((date, i) => ({ date, value: Math.round((retirementNow || 60000) * (0.96 + (0.04 * i) / 59) + Math.sin(i / 4) * 900) }));
 
     return (
         <Screen>
@@ -73,18 +81,18 @@ const AssetsScreen: React.FC = () => {
                     <Section title="Net worth over time">
                         <Card gap="md">
                             <BankGate locked={!bankLinked} title="Net worth over time" benefit="See how your net worth rises and falls month by month, built from your real account balances."
-                                preview={<MonthlyLine points={demoNet} label="Example net worth by month" />}>
+                                preview={<TimeLine points={demoNet} label="Example net worth over time" />}>
                                 {timeline.length >= 2
                                     ? <>
-                                        <MonthlyLine points={timeline.map(t => ({ month: t.month, value: t.net }))} label="Net worth by month" />
+                                        <TimeLine points={timeline.map(t => ({ date: t.date, value: t.net }))} label="Net worth over time" />
                                         <Inline justify="space-between">
-                                            <Text variant="small" color="textMuted">Since {monthLabel(timeline[0].month)}</Text>
+                                            <Text variant="small" color="textMuted">Since {snapshotLabel(timeline[0].date, 0)}, {elapsedLabel(spanOf(timeline.map(t => t.date)))} ago</Text>
                                             <Text variant="smallStrong" color={timeline[timeline.length - 1].net >= timeline[0].net ? 'accent' : 'risk'}>
                                                 {`${timeline[timeline.length - 1].net >= timeline[0].net ? '+' : '−'}${money(Math.abs(timeline[timeline.length - 1].net - timeline[0].net))}`}
                                             </Text>
                                         </Inline>
                                     </>
-                                    : <Text variant="small" color="textMuted">Your bank is connected and we’ve started tracking. The timeline appears after your next monthly sync, once there are two points to draw.</Text>}
+                                    : <Text variant="small" color="textMuted">Your bank is connected and we’ve started tracking. We add a point every day, so the line appears tomorrow.</Text>}
                             </BankGate>
                         </Card>
                     </Section>
@@ -92,7 +100,7 @@ const AssetsScreen: React.FC = () => {
                     {groups.length > 0 ? (
                         <Section title="What you own">
                             <Card gap="md">
-                                <StackedBar label="Your assets by type" height={18} segments={groups.map(g => ({ key: g.type, share: g.share, color: TYPE_COLOR[g.type] }))} />
+                                <StackedBar label="Your assets by type" height={18} segments={groups.map(g => ({ key: g.type, share: g.share, color: TYPE_COLOR[g.type], label: g.type, detail: money(g.total) }))} />
                                 <Stack gap="sm">
                                     {groups.map(g => (
                                         <Inline key={g.type} justify="space-between" gap="md">
@@ -137,15 +145,15 @@ const AssetsScreen: React.FC = () => {
                     <Section title="Your actual performance">
                         <Card gap="md">
                             <BankGate locked={!bankLinked || retirementLinked.length === 0} title="Actual retirement performance" benefit="Track how your real 401(k) or IRA balance has changed over time. Connect the bank that holds it."
-                                preview={<MonthlyLine points={demoRetire} label="Example retirement balance by month" />}>
+                                preview={<TimeLine points={demoRetire} label="Example retirement balance over time" />}>
                                 <Inline justify="space-between" align="baseline"><Text variant="label" color="textMuted">Linked retirement balance</Text><Text variant="stat">{money(retirementLinked.reduce((a, x) => a + x.value, 0))}</Text></Inline>
                                 {perf ? (
                                     <>
-                                        <Text variant="smallStrong" color={perf.change >= 0 ? 'accent' : 'risk'}>{`${perf.change >= 0 ? '+' : '−'}${money(Math.abs(perf.change))} (${perf.change >= 0 ? '+' : '−'}${pct(Math.abs(perf.percent), 1)}) over ${perf.months} ${perf.months === 1 ? 'month' : 'months'}`}</Text>
-                                        <MonthlyLine points={retirementHistory.map(h => ({ month: h.month, value: h.retirement }))} label="Retirement balance by month" />
+                                        <Text variant="smallStrong" color={perf.change >= 0 ? 'accent' : 'risk'}>{`${perf.change >= 0 ? '+' : '−'}${money(Math.abs(perf.change))} (${perf.change >= 0 ? '+' : '−'}${pct(Math.abs(perf.percent), 1)}) over ${elapsedLabel(perf.days)}`}</Text>
+                                        <TimeLine points={retirementHistory.map(h => ({ date: h.date, value: h.retirement }))} label="Retirement balance over time" />
                                         <Text variant="caption" color="textMuted">Balance changes include your contributions as well as market gains and losses.</Text>
                                     </>
-                                ) : <Text variant="small" color="textMuted">We started tracking this balance today. The growth chart appears after your next monthly sync.</Text>}
+                                ) : <Text variant="small" color="textMuted">We started tracking this balance today. The growth chart appears once we have a couple of days of data.</Text>}
                             </BankGate>
                         </Card>
                     </Section>
