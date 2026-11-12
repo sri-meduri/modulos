@@ -1,7 +1,10 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import useAmplifyStorage from '../hooks/useAmplifyStorage';
 import { useAuth } from './AuthContext';
-import { Finances, Settings, RiskProfile, Expense, LoanType } from '../types';
+import { Finances, Settings, RiskProfile, Expense, LoanType, Loan, PaymentCandidate } from '../types';
+import { applySyncResult, PlaidImport } from '../services/plaidSync';
+import { candidateToPayment } from '../services/payments';
+import { isActiveLoan } from '../services/payoff';
 import { getEffectiveMinPayment } from '../services/loanCalculator';
 import { STANDARD_EXPENSES } from '../constants';
 import { createSampleFinances, createSampleSettings } from '../services/sampleData';
@@ -14,6 +17,11 @@ interface FinanceContextType {
     setSettings: React.Dispatch<React.SetStateAction<Settings>>;
     monthlyDebtPayments: number;
     totalDebt: number;
+    /** Loans that count toward totals and the plan (status 'active', balance > 0). */
+    activeLoans: Loan[];
+    /** What-if loans from "Test a new loan". */
+    consideringLoans: Loan[];
+    paidOffLoans: Loan[];
     totalAssets: number;
     netWorth: number;
     monthlyExpensesTotal: number;
@@ -21,6 +29,12 @@ interface FinanceContextType {
     debtToIncomeRatio: number;
     loading: boolean;
     deleteAllData: () => Promise<void>;
+    /** Bank transactions that look like debt payments but matched no debt. */
+    paymentCandidates: PaymentCandidate[];
+    /** Merge a bank sync result: loans, bills, assets, detected payments. */
+    applyBankSync: (imported: PlaidImport) => void;
+    /** Answer "Is this a debt payment?": a loan id, or null for "no". */
+    resolveCandidate: (candidateId: string, loanId: string | null) => void;
 }
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
@@ -48,11 +62,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }, [isSample]);
 
     const initialSettings = useMemo<Settings>(() => (
-        isSample ? createSampleSettings() : { riskProfile: RiskProfile.Average }
+        isSample ? createSampleSettings() : { riskProfile: RiskProfile.Average, strategy: 'avalanche' as const, extraPayment: 0 }
     ), [isSample]);
 
-    const [finances, setFinances, financesLoading, deleteRemoteFinances] = useAmplifyStorage<Finances>('finances', initialFinances, 'Finances', ['expenses', 'loans', 'assets', 'incomeExpenseHistory']);
-    const [settings, setSettings, settingsLoading, deleteRemoteSettings] = useAmplifyStorage<Settings>('settings', initialSettings, 'Settings');
+    const [finances, setFinances, financesLoading, deleteRemoteFinances] = useAmplifyStorage<Finances>('finances', initialFinances, 'Finances', ['expenses', 'loans', 'assets', 'payments', 'incomeExpenseHistory', 'balanceHistory']);
+    const [settings, setSettings, settingsLoading, deleteRemoteSettings] = useAmplifyStorage<Settings>('settings', initialSettings, 'Settings', ['customOrder', 'payeeRules', 'ignoredCandidates']);
 
     // Guest data is never silently discarded on sign-in: if guest_finances/guest_settings
     // exist in localStorage once a real user is signed in, always ask before either
@@ -83,6 +97,47 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         localStorage.removeItem('guest_finances');
         localStorage.removeItem('guest_settings');
         setImportPrompt(null);
+    };
+
+    const [rawCandidates, setRawCandidates] = useState<PaymentCandidate[]>([]);
+
+    const paymentCandidates = useMemo(() => {
+        const handled = new Set([...(settings.ignoredCandidates ?? []), ...(finances.payments ?? []).map(p => p.id)]);
+        return rawCandidates.filter(c => !handled.has(c.id));
+    }, [rawCandidates, settings.ignoredCandidates, finances.payments]);
+
+    const applyBankSync = (imported: PlaidImport) => {
+        const rules = settings.payeeRules ?? {};
+        // Candidates whose payee the user already classified are applied silently.
+        const remembered: PaymentCandidate[] = [];
+        const open: PaymentCandidate[] = [];
+        for (const c of imported.paymentCandidates) (rules[c.payee] ? remembered : open).push(c);
+        setFinances(prev => {
+            let next = applySyncResult(prev, imported);
+            if (remembered.length) {
+                const extra = remembered.flatMap(c => {
+                    const loan = next.loans.find(l => l.id === rules[c.payee]);
+                    return loan ? [candidateToPayment(c, loan)] : [];
+                });
+                next = applySyncResult(next, { ...imported, loans: [], expenses: [], assets: [], incomeExpenseHistory: [], payments: extra });
+            }
+            return next;
+        });
+        setRawCandidates(open);
+    };
+
+    const resolveCandidate = (candidateId: string, loanId: string | null) => {
+        const c = rawCandidates.find(x => x.id === candidateId);
+        if (!c) return;
+        if (loanId === null) {
+            setSettings(prev => ({ ...prev, ignoredCandidates: [...(prev.ignoredCandidates ?? []), c.id].slice(-200) }));
+            return;
+        }
+        const loan = finances.loans.find(l => l.id === loanId);
+        if (!loan) return;
+        setFinances(prev => ({ ...prev, payments: [candidateToPayment(c, loan), ...(prev.payments ?? [])] }));
+        // Remember the payee so later matches are automatic.
+        setSettings(prev => ({ ...prev, payeeRules: { ...(prev.payeeRules ?? {}), [c.payee]: loanId } }));
     };
 
     const deleteAllData = async () => {
@@ -118,7 +173,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const propertyTaxExpenseId = `property-tax-${loan.id}`;
             const existingPropertyTaxExpense = updatedExpenses.find(exp => exp.id === propertyTaxExpenseId);
 
-            if (loan.type === LoanType.Mortgage && loan.monthlyPropertyTax && loan.monthlyPropertyTax > 0) {
+            if (loan.type === LoanType.Mortgage && loan.monthlyPropertyTax && loan.monthlyPropertyTax > 0 && (loan.status ?? 'active') === 'active') {
                 if (existingPropertyTaxExpense) {
                     // Update amount if it changed
                     if (existingPropertyTaxExpense.amount !== loan.monthlyPropertyTax) {
@@ -148,12 +203,13 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
     }, [finances.loans]);
 
-    const { monthlyDebtPayments, totalDebt, totalAssets, netWorth, monthlyExpensesTotal, monthlyLeftoverMoney, debtToIncomeRatio } = useMemo(() => {
-        const totalDebt = finances.loans.reduce((acc, loan) => acc + loan.balance, 0);
+    const { activeLoans, consideringLoans, paidOffLoans, monthlyDebtPayments, totalDebt, totalAssets, netWorth, monthlyExpensesTotal, monthlyLeftoverMoney, debtToIncomeRatio } = useMemo(() => {
+        const activeLoans = finances.loans.filter(isActiveLoan);
+        const totalDebt = activeLoans.reduce((acc, loan) => acc + loan.balance, 0);
         
         const totalAssets = (finances.assets ?? []).reduce((acc, asset) => acc + asset.value, 0);
 
-        const monthlyDebtPayments = finances.loans.reduce((acc, loan) => acc + getEffectiveMinPayment(loan), 0);
+        const monthlyDebtPayments = activeLoans.reduce((acc, loan) => acc + getEffectiveMinPayment(loan), 0);
         
         const monthlyExpensesTotal = finances.expenses.reduce((acc, expense) => acc + expense.amount, 0);
         
@@ -165,6 +221,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             : 0;
 
         return {
+            activeLoans,
+            consideringLoans: finances.loans.filter(l => l.status === 'considering'),
+            paidOffLoans: finances.loans.filter(l => l.status === 'paid_off' || (l.status === undefined && l.balance <= 0.005)),
             monthlyDebtPayments,
             totalDebt,
             totalAssets,
@@ -205,6 +264,26 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         });
     }, [finances.monthlyNetIncome, monthlyExpensesTotal, loading, setFinances]);
 
+    // Record total active debt per month so the Overview/Progress charts show
+    // real history (the current month is upserted as balances change).
+    useEffect(() => {
+        if (loading) return;
+        const balance = Math.round(totalDebt * 100) / 100;
+        if (balance === 0 && !(finances.balanceHistory ?? []).length) return;
+        const monthKey = new Date().toISOString().slice(0, 7);
+        setFinances(prev => {
+            const history = prev.balanceHistory ?? [];
+            const existing = history.find(h => h.month === monthKey);
+            if (existing && existing.balance === balance) return prev;
+            return {
+                ...prev,
+                balanceHistory: [...history.filter(h => h.month !== monthKey), { month: monthKey, balance }]
+                    .sort((a, b) => a.month.localeCompare(b.month))
+                    .slice(-24),
+            };
+        });
+    }, [totalDebt, loading, setFinances]);
+
     const value = {
         finances,
         setFinances,
@@ -212,6 +291,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setSettings,
         monthlyDebtPayments,
         totalDebt,
+        activeLoans,
+        consideringLoans,
+        paidOffLoans,
         totalAssets,
         netWorth,
         monthlyExpensesTotal,
@@ -219,6 +301,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         debtToIncomeRatio,
         loading,
         deleteAllData,
+        paymentCandidates,
+        applyBankSync,
+        resolveCandidate,
     };
 
     return (

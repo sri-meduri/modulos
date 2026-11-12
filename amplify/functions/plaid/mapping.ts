@@ -21,6 +21,10 @@ export interface MappedLoan {
   minPaymentOverride?: number;
   plaidItemId: string;
   institutionName?: string;
+  /** Plaid account id, so outgoing payments can be matched to this loan. */
+  plaidAccountId?: string;
+  /** Day of month the next payment is due, when Plaid supplies it. */
+  dueDay?: number;
 }
 
 export interface MappedExpense {
@@ -110,6 +114,12 @@ export function mapAccountsToAssets(
   return assets;
 }
 
+const dueDayOf = (iso: string | null | undefined): { dueDay?: number } => {
+  if (!iso) return {};
+  const day = parseInt(iso.slice(8, 10), 10);
+  return day >= 1 && day <= 31 ? { dueDay: day } : {};
+};
+
 export function mapLiabilitiesToLoans(
   response: LiabilitiesGetResponse,
   itemId: string,
@@ -139,6 +149,8 @@ export function mapLiabilitiesToLoans(
         : {}),
       plaidItemId: itemId,
       institutionName,
+      plaidAccountId: credit.account_id,
+      ...dueDayOf(credit.next_payment_due_date),
     });
   }
 
@@ -166,6 +178,8 @@ export function mapLiabilitiesToLoans(
         : {}),
       plaidItemId: itemId,
       institutionName,
+      plaidAccountId: mortgage.account_id,
+      ...dueDayOf(mortgage.next_payment_due_date),
     });
   }
 
@@ -187,6 +201,8 @@ export function mapLiabilitiesToLoans(
         : {}),
       plaidItemId: itemId,
       institutionName,
+      plaidAccountId: student.account_id,
+      ...dueDayOf(student.next_payment_due_date),
     });
   }
 
@@ -206,6 +222,7 @@ export function mapLiabilitiesToLoans(
       originalAmount: balance,
       plaidItemId: itemId,
       institutionName,
+      plaidAccountId: account.account_id,
     });
   }
 
@@ -403,4 +420,140 @@ export function detectRecurringExpenses(
     });
   }
   return detected;
+}
+
+
+// ---------------------------------------------------------------------------
+// Debt payment detection
+// ---------------------------------------------------------------------------
+
+export interface MappedPayment {
+  id: string;
+  loanId: string;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  payee: string;
+  plaidItemId: string;
+}
+
+export interface MappedPaymentCandidate {
+  id: string;
+  date: string;
+  amount: number;
+  payee: string;
+  plaidItemId: string;
+}
+
+const DETAILED_TO_LOAN_TYPE: Record<string, MappedLoan['type']> = {
+  LOAN_PAYMENTS_CREDIT_CARD_PAYMENT: 'Credit Card',
+  LOAN_PAYMENTS_CAR_PAYMENT: 'Auto',
+  LOAN_PAYMENTS_MORTGAGE_PAYMENT: 'Mortgage',
+  LOAN_PAYMENTS_STUDENT_LOAN_PAYMENT: 'Student',
+};
+
+const tokens = (text: string | null | undefined): Set<string> =>
+  new Set(
+    (text ?? '')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3 && !['payment', 'online', 'autopay', 'the', 'bank', 'card', 'loan'].includes(t))
+  );
+
+const daysApart = (a: string, b: string): number =>
+  Math.abs(Date.parse(a) - Date.parse(b)) / DAY_MS;
+
+/**
+ * Matches settled transactions from the last `windowDays` to debts.
+ *
+ * 1. A credit on a loan's own account (Plaid amount < 0) is a payment to that
+ *    loan: exact, no guessing.
+ * 2. An outflow categorised LOAN_PAYMENTS from a bank account is matched to a
+ *    loan by category -> loan type, payee-name overlap with the loan/institution
+ *    and closeness to the expected payment. If only one loan fits the category it
+ *    wins outright. Outflows that duplicate a pass-1 payment (same amount within
+ *    4 days) are dropped so a payment is never counted twice.
+ * 3. Anything left over that looks like a loan payment but matched nothing is
+ *    returned as a candidate so the user can answer "Is this a debt payment?".
+ */
+export function detectDebtPayments(
+  transactions: Transaction[],
+  loans: MappedLoan[],
+  now: Date = new Date(),
+  windowDays = 90
+): { payments: MappedPayment[]; candidates: MappedPaymentCandidate[] } {
+  const cutoff = now.getTime() - windowDays * DAY_MS;
+  const loanByAccount = new Map(
+    loans.filter((l) => l.plaidAccountId).map((l) => [l.plaidAccountId as string, l])
+  );
+  const payments: MappedPayment[] = [];
+  const candidates: MappedPaymentCandidate[] = [];
+
+  const recent = transactions
+    .filter((t) => !t.pending && Date.parse(t.date) >= cutoff)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  for (const txn of recent) {
+    const loan = loanByAccount.get(txn.account_id);
+    if (loan && (txn.amount ?? 0) < 0) {
+      payments.push({
+        id: `plaid-txn-${txn.transaction_id}`,
+        loanId: loan.id,
+        amount: Math.round(Math.abs(txn.amount) * 100) / 100,
+        date: txn.date,
+        payee: txn.merchant_name ?? txn.name ?? loan.name,
+        plaidItemId: loan.plaidItemId,
+      });
+    }
+  }
+  const accountSide = payments.slice();
+
+  for (const txn of recent) {
+    const amount = txn.amount ?? 0;
+    if (amount <= 0 || loanByAccount.has(txn.account_id)) continue;
+    const category = txn.personal_finance_category;
+    if (category?.primary !== 'LOAN_PAYMENTS') continue;
+
+    if (accountSide.some((p) => Math.abs(p.amount - amount) < 0.01 && daysApart(p.date, txn.date) <= 4)) {
+      continue; // already captured from the loan account's side
+    }
+
+    const payee = txn.merchant_name ?? txn.name ?? 'Payment';
+    const wantType = DETAILED_TO_LOAN_TYPE[category.detailed ?? ''];
+    const pool = wantType ? loans.filter((l) => l.type === wantType) : loans;
+    const payeeTokens = new Set([...tokens(txn.name), ...tokens(txn.merchant_name)]);
+
+    let best: MappedLoan | undefined;
+    let bestScore = 0;
+    for (const loan of pool) {
+      let score = wantType ? 1 : 0;
+      const loanTokens = new Set([...tokens(loan.name), ...tokens(loan.institutionName)]);
+      if ([...payeeTokens].some((t) => loanTokens.has(t))) score += 2;
+      const expected = loan.minPaymentOverride;
+      if (expected && amount >= expected * 0.95) score += 1;
+      if (score > bestScore) {
+        best = loan;
+        bestScore = score;
+      }
+    }
+    if (best && (bestScore >= 2 || pool.length === 1)) {
+      payments.push({
+        id: `plaid-txn-${txn.transaction_id}`,
+        loanId: best.id,
+        amount: Math.round(amount * 100) / 100,
+        date: txn.date,
+        payee,
+        plaidItemId: best.plaidItemId,
+      });
+    } else {
+      candidates.push({
+        id: `plaid-txn-${txn.transaction_id}`,
+        date: txn.date,
+        amount: Math.round(amount * 100) / 100,
+        payee,
+        plaidItemId: txn.account_id,
+      });
+    }
+  }
+
+  return { payments, candidates };
 }

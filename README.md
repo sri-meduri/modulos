@@ -11,74 +11,34 @@ A web application to help you manage your finances and create a debt payoff plan
 - **Debt Payoff Plan**: Visualize your path to being debt-free with charts
 - **Risk Profile Settings**: Customize DTI thresholds based on your risk tolerance
 
-## NEW: Other Deductions Field
+## What's in the app
 
-The Finances page now includes an **"Other Deductions"** field when using Gross Income mode. Use this to enter monthly deductions like:
-- Health insurance premiums
-- HSA/FSA contributions
-- Union dues
-- Other pre-tax deductions
+- **Overview**: debt-free date, progress ring, minimums / DTI / leftover, balance-over-time chart, an insight, net worth.
+- **Debts**: every debt with Active / Considering / Paid off, loan-type presets, import from bank, and **Test a new loan** (Safe / Borderline / Not Recommended, DTI gauge before and after, impact on leftover and debt-free date, "what would make this safer?").
+- **Plan**: Avalanche, Snowball or Custom order, an extra-payment slider with quick picks, before/after chart, payoff order, target date, and what-ifs (considering loans, refinance).
+- **Budget**: take-home pay, one fixed-expenses number, optional category breakdown, assets.
+- **Progress**: log payments, bank-detected payments, milestones, balance history.
+- **Profile**: account, linked accounts (connect, reconnect, disconnect and delete imported data), data and privacy.
+- **Onboarding**: connect a bank or enter income and a first debt; guests and the sample profile are supported.
 
-This amount is automatically factored into your net income calculation.
+## Run it
 
-**Prerequisites:** Node.js
+```bash
+npm install
+npm run sandbox        # your private cloud backend (see docs/SANDBOX.md)
+npm run dev:sandbox    # the app against that sandbox
+```
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+Guest and sample modes work with no backend at all (they only need an `amplify_outputs.json` file to exist for the build).
 
-2. Run the app:
-   ```bash
-   npm run dev
-   ```
+See **docs/SANDBOX.md** for how to test auth, the database and Plaid without touching the live app.
 
-3. Open your browser to the URL shown (usually http://localhost:5173)
-
-## Build for Production
+## Build for production
 
 ```bash
 npm run build
 ```
 
-The built files will be in the `dist` directory.
+## Technology stack
 
-## Technology Stack
-
-- React 19
-- TypeScript
-- Vite
-- Recharts for data visualization
-- React Router for navigation
-- Local Storage for persistence
-
-## How It Works
-
-### Avalanche Method
-
-Modulos uses the avalanche method for debt payoff:
-1. Pay minimums on all loans
-2. Apply extra payment to the highest APR loan
-3. When a loan is paid off, roll that payment to the next highest APR loan
-4. Saves you the most money on interest
-
-### Tax Calculations
-
-When using Gross Income mode, Modulos calculates your net income by considering:
-- Federal income tax brackets
-- State income tax (for applicable states)
-- Local/city taxes (for applicable cities)
-- FICA taxes (Social Security & Medicare)
-- 401(k) contributions (pre-tax)
-- Other deductions (pre-tax)
-
-### DTI (Debt-to-Income) Ratio
-
-Your DTI ratio is the percentage of your gross monthly income that goes toward debt payments. Lenders use this to assess loan affordability:
-- Conservative (Low Risk): Keep DTI below 30%
-- Moderate (Average Risk): Keep DTI below 36%
-- Aggressive (High Risk): Keep DTI below 40%
-
-## License
-
-MIT 
+React 19, TypeScript, Vite, Tailwind 4, Recharts, React Router, AWS Amplify Gen 2 (Cognito, AppSync/DynamoDB, Lambda) and Plaid.

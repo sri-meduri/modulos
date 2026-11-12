@@ -153,3 +153,12 @@ export const EXPENSE_CATEGORIES: ExpenseCategory[] = [
         ],
     },
 ];
+
+/** Typical APR / term per loan type, used to prefill the debt form. */
+export const LOAN_PRESETS: Record<string, { apr: number; termYears: number; name: string; hint: string }> = {
+    'Credit Card': { apr: 22, termYears: 5, name: 'Credit card', hint: 'Typical for a credit card' },
+    'Auto': { apr: 7, termYears: 5, name: 'Auto loan', hint: 'Typical for an auto loan' },
+    'Student': { apr: 5.5, termYears: 10, name: 'Student loan', hint: 'Typical for a student loan' },
+    'Mortgage': { apr: 6.5, termYears: 30, name: 'Mortgage', hint: 'Typical for a 30-year mortgage' },
+    'Other': { apr: 10, termYears: 3, name: 'Loan', hint: 'A rough estimate; adjust to your loan' },
+};

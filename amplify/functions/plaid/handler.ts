@@ -22,6 +22,7 @@ import {
   mapRecurringToExpenses,
   mapAccountsToAssets,
   mapTransactionsToMonthlyHistory,
+  detectDebtPayments,
   detectRecurringExpenses,
   MappedLoan,
   MappedExpense,
@@ -131,6 +132,21 @@ async function createLinkToken(sub: string, args: PlaidArgs) {
     args.redirectUri && ALLOWED_REDIRECT_URIS.has(args.redirectUri)
       ? args.redirectUri
       : undefined;
+  // Update mode ("Reconnect"): re-authenticate an existing item. Plaid takes the
+  // item's access token and no `products`.
+  if (args.itemId) {
+    const token = (await tokensForUser(sub)).find((t) => t.itemId === args.itemId);
+    if (!token) throw new Error('Unknown itemId for this user');
+    const update = await plaid.linkTokenCreate({
+      user: { client_user_id: sub },
+      client_name: 'Modulos',
+      country_codes: [CountryCode.Us],
+      language: 'en',
+      access_token: token.accessToken,
+      ...(redirectUri ? { redirect_uri: redirectUri } : {}),
+    });
+    return { linkToken: update.data.link_token, expiration: update.data.expiration };
+  }
   const response = await plaid.linkTokenCreate({
     user: { client_user_id: sub },
     client_name: 'Modulos',
@@ -219,7 +235,7 @@ async function syncPlaidData(sub: string, args: PlaidArgs) {
   }
   const now = new Date().toISOString();
   if (tokens.length === 0) {
-    return { loans: [], expenses: [], assets: [], incomeExpenseHistory: [], syncedItemIds: [], lastSyncedAt: now };
+    return { loans: [], expenses: [], assets: [], payments: [], paymentCandidates: [], incomeExpenseHistory: [], syncedItemIds: [], attentionItemIds: [], lastSyncedAt: now };
   }
 
   const allLoans: MappedLoan[] = [];
@@ -227,6 +243,7 @@ async function syncPlaidData(sub: string, args: PlaidArgs) {
   const allAssets: MappedAsset[] = [];
   const allTransactions: Transaction[] = [];
   const syncedItemIds: string[] = [];
+  const attentionItemIds: string[] = [];
 
   // 12-month window: first day of the month 11 months back through today.
   const endDateObj = new Date();
@@ -237,65 +254,80 @@ async function syncPlaidData(sub: string, args: PlaidArgs) {
   const endDate = YYYY_MM_DD(endDateObj);
 
   for (const token of tokens) {
-    const { data: items } = await dataClient.models.PlaidItem.list({
-      filter: { itemId: { eq: token.itemId } },
-    });
-    const institutionName = items[0]?.institutionName ?? undefined;
-
-    // Bank/investment balances become assets. accountsGet works for every
-    // item; investment accounts only appear if the user consented to them.
-    const accountsResp = await plaid.accountsGet({ access_token: token.accessToken });
-    allAssets.push(...mapAccountsToAssets(accountsResp.data.accounts, token.itemId, institutionName));
-
     try {
-      const liabilities = await plaid.liabilitiesGet({ access_token: token.accessToken });
-      allLoans.push(...mapLiabilitiesToLoans(liabilities.data, token.itemId, institutionName));
-    } catch (err: unknown) {
-      // An item with no loan accounts (checking/savings-only logins) is a
-      // normal case, not a failure — transactions still sync below.
-      const code = (err as { response?: { data?: { error_code?: string } } })?.response?.data?.error_code;
-      if (!['NO_LIABILITY_ACCOUNTS', 'PRODUCTS_NOT_SUPPORTED', 'PRODUCT_NOT_READY'].includes(code ?? '')) {
-        throw err;
+      const { data: items } = await dataClient.models.PlaidItem.list({
+        filter: { itemId: { eq: token.itemId } },
+      });
+      const institutionName = items[0]?.institutionName ?? undefined;
+
+      // Bank/investment balances become assets. accountsGet works for every
+      // item; investment accounts only appear if the user consented to them.
+      const accountsResp = await plaid.accountsGet({ access_token: token.accessToken });
+      allAssets.push(...mapAccountsToAssets(accountsResp.data.accounts, token.itemId, institutionName));
+
+      try {
+        const liabilities = await plaid.liabilitiesGet({ access_token: token.accessToken });
+        allLoans.push(...mapLiabilitiesToLoans(liabilities.data, token.itemId, institutionName));
+      } catch (err: unknown) {
+        // An item with no loan accounts (checking/savings-only logins) is a
+        // normal case, not a failure — transactions still sync below.
+        const code = (err as { response?: { data?: { error_code?: string } } })?.response?.data?.error_code;
+        if (!['NO_LIABILITY_ACCOUNTS', 'PRODUCTS_NOT_SUPPORTED', 'PRODUCT_NOT_READY'].includes(code ?? '')) {
+          throw err;
+        }
       }
-    }
 
-    // Prefer Plaid's ML-powered recurring streams; fall back to our own
-    // cadence detection when the endpoint is gated (INVALID_PRODUCT — e.g.
-    // the Trial plan) or transactions aren't ready yet.
-    let recurringUnavailable = false;
-    try {
-      const recurring = await plaid.transactionsRecurringGet({ access_token: token.accessToken });
-      allExpenses.push(
-        ...mapRecurringToExpenses(recurring.data.outflow_streams, token.itemId, institutionName)
-      );
-    } catch (err: unknown) {
-      const code = (err as { response?: { data?: { error_code?: string } } })?.response?.data?.error_code;
-      if (!['PRODUCT_NOT_READY', 'INVALID_PRODUCT', 'ADDITIONAL_CONSENT_REQUIRED'].includes(code ?? '')) {
-        throw err;
+      // Prefer Plaid's ML-powered recurring streams; fall back to our own
+      // cadence detection when the endpoint is gated (INVALID_PRODUCT — e.g.
+      // the Trial plan) or transactions aren't ready yet.
+      let recurringUnavailable = false;
+      try {
+        const recurring = await plaid.transactionsRecurringGet({ access_token: token.accessToken });
+        allExpenses.push(
+          ...mapRecurringToExpenses(recurring.data.outflow_streams, token.itemId, institutionName)
+        );
+      } catch (err: unknown) {
+        const code = (err as { response?: { data?: { error_code?: string } } })?.response?.data?.error_code;
+        if (!['PRODUCT_NOT_READY', 'INVALID_PRODUCT', 'ADDITIONAL_CONSENT_REQUIRED'].includes(code ?? '')) {
+          throw err;
+        }
+        recurringUnavailable = true;
       }
-      recurringUnavailable = true;
-    }
 
-    let itemTransactions: Transaction[] = [];
-    try {
-      itemTransactions = await fetchTransactions(token.accessToken, startDate, endDate);
-      allTransactions.push(...itemTransactions);
+      let itemTransactions: Transaction[] = [];
+      try {
+        itemTransactions = await fetchTransactions(token.accessToken, startDate, endDate);
+        allTransactions.push(...itemTransactions);
+      } catch (err: unknown) {
+        // Not-ready race right after connect: skip history this pass, retry later.
+        const code = (err as { response?: { data?: { error_code?: string } } })?.response?.data?.error_code;
+        if (code !== 'PRODUCT_NOT_READY') throw err;
+      }
+
+      if (recurringUnavailable && itemTransactions.length > 0) {
+        allExpenses.push(
+          ...detectRecurringExpenses(itemTransactions, token.itemId, institutionName)
+        );
+      }
+
+      if (items[0]) {
+        await dataClient.models.PlaidItem.update({ id: items[0].id, lastSyncedAt: now, status: 'active' });
+      }
+      syncedItemIds.push(token.itemId);
+
     } catch (err: unknown) {
-      // Not-ready race right after connect: skip history this pass, retry later.
+      // Expired bank login: flag the item for "Reconnect" instead of failing
+      // the whole sync (other banks should still refresh).
       const code = (err as { response?: { data?: { error_code?: string } } })?.response?.data?.error_code;
-      if (code !== 'PRODUCT_NOT_READY') throw err;
+      if (code !== 'ITEM_LOGIN_REQUIRED') throw err;
+      const { data: broken } = await dataClient.models.PlaidItem.list({
+        filter: { itemId: { eq: token.itemId } },
+      });
+      if (broken[0]) {
+        await dataClient.models.PlaidItem.update({ id: broken[0].id, status: 'needs_attention' });
+      }
+      attentionItemIds.push(token.itemId);
     }
-
-    if (recurringUnavailable && itemTransactions.length > 0) {
-      allExpenses.push(
-        ...detectRecurringExpenses(itemTransactions, token.itemId, institutionName)
-      );
-    }
-
-    if (items[0]) {
-      await dataClient.models.PlaidItem.update({ id: items[0].id, lastSyncedAt: now });
-    }
-    syncedItemIds.push(token.itemId);
   }
 
   // Aggregate all connected accounts into a single household 12-month history.
@@ -303,6 +335,10 @@ async function syncPlaidData(sub: string, args: PlaidArgs) {
   const incomeExpenseHistory: MappedMonthlySnapshot[] = allTransactions.length
     ? mapTransactionsToMonthlyHistory(allTransactions, endDateObj)
     : [];
+
+  const { payments: detectedPayments, candidates: paymentCandidates } = allTransactions.length
+    ? detectDebtPayments(allTransactions, allLoans)
+    : { payments: [], candidates: [] };
 
   console.log(
     `syncPlaidData result: items=${tokens.length} loans=${allLoans.length} ` +
@@ -316,8 +352,11 @@ async function syncPlaidData(sub: string, args: PlaidArgs) {
     loans: allLoans,
     expenses: allExpenses,
     assets: allAssets,
+    payments: detectedPayments,
+    paymentCandidates,
     incomeExpenseHistory,
     syncedItemIds,
+    attentionItemIds,
     lastSyncedAt: now,
   };
 }

@@ -12,6 +12,40 @@ export interface Loan {
     /** Set when imported via Plaid; links the loan to a connected bank. */
     plaidItemId?: string;
     institutionName?: string;
+    /** Lifecycle: 'considering' = what-if (not counted in totals), 'paid_off' = done. Missing = active. */
+    status?: DebtStatus;
+    /** Day of month the payment is due (1-31), when known (Plaid or user). */
+    dueDay?: number;
+    /** Optional Plaid account id, used to match outgoing payments. */
+    plaidAccountId?: string;
+}
+
+export type DebtStatus = 'active' | 'considering' | 'paid_off';
+
+export type PayoffStrategy = 'avalanche' | 'snowball' | 'custom';
+
+/** A logged debt payment (manual, or detected from a linked bank). */
+export interface Payment {
+    id: string;
+    loanId: string;
+    amount: number;
+    /** ISO date (YYYY-MM-DD). */
+    date: string;
+    source: 'manual' | 'detected';
+    /** Portion above the loan's minimum payment. */
+    extra?: number;
+    /** Detected payments start unconfirmed; the first per debt is confirmed by the user. */
+    confirmed?: boolean;
+    payee?: string;
+}
+
+/** An outgoing bank transaction that looks like a debt payment but matched no debt. */
+export interface PaymentCandidate {
+    id: string;
+    date: string;
+    amount: number;
+    payee: string;
+    plaidItemId?: string;
 }
 
 export interface Expense {
@@ -77,12 +111,32 @@ export interface Finances {
     loans: Loan[];
     /** Optional for records saved before assets existed; treat missing as []. */
     assets?: Asset[];
+    /** Logged + detected debt payments. Optional for records saved before progress tracking. */
+    payments?: Payment[];
     /** Rolling history of the last 12 months of income vs. expenses. */
     incomeExpenseHistory?: MonthlyFinanceSnapshot[];
+    /** Month-end total of active debt balances, for the real history chart. */
+    balanceHistory?: { month: string; balance: number }[];
 }
 
 export interface Settings {
     riskProfile: RiskProfile;
+    /** Chosen payoff method. */
+    strategy?: PayoffStrategy;
+    /** Extra monthly payment applied by the plan. */
+    extraPayment?: number;
+    /** Loan ids in priority order for the 'custom' strategy. */
+    customOrder?: string[];
+    /** Optional target debt-free date (YYYY-MM). */
+    targetDate?: string;
+    /** First-run flow finished (or skipped). */
+    onboardingDone?: boolean;
+    /** User dismissed the 'connect a bank' nudge on Overview. */
+    bankNudgeDismissed?: boolean;
+    /** Payee names the user confirmed as debt payments: { payee: loanId }. */
+    payeeRules?: Record<string, string>;
+    /** Candidate payments the user said are NOT debt payments. */
+    ignoredCandidates?: string[];
 }
 
 export type FilingStatus = 'single' | 'married';

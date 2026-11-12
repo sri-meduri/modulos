@@ -1,9 +1,13 @@
-import { Finances, Loan, Expense, Asset, MonthlyFinanceSnapshot } from '../types';
+import { mergeDetectedPayments } from './payments';
+import { Finances, Loan, Expense, Asset, Payment, PaymentCandidate, MonthlyFinanceSnapshot } from '../types';
 
 export interface PlaidImport {
     loans: Loan[];
     expenses: Expense[];
     assets: Asset[];
+    payments: Payment[];
+    paymentCandidates: PaymentCandidate[];
+    attentionItemIds: string[];
     incomeExpenseHistory: MonthlyFinanceSnapshot[];
 }
 
@@ -38,7 +42,11 @@ export function mergePlaidData(current: Finances, imported: PlaidImport): Financ
             originalAmount: loan.originalAmount === loan.balance ? update.balance : loan.originalAmount,
             plaidItemId: update.plaidItemId,
             institutionName: update.institutionName ?? loan.institutionName,
+            plaidAccountId: update.plaidAccountId ?? loan.plaidAccountId,
+            dueDay: update.dueDay ?? loan.dueDay,
         };
+        // A balance that reaches zero at the bank means the debt is paid off.
+        if (update.balance <= 0.005 && next.status !== 'considering') next.status = 'paid_off';
         if (update.apr > 0) next.apr = update.apr;
         if (update.minPaymentOverride !== undefined && update.minPaymentOverride > 0) {
             next.minPaymentOverride = update.minPaymentOverride;
@@ -119,7 +127,7 @@ export function unlinkPlaidItem(current: Finances, itemId: string): Finances {
  * JSON strings depending on how many serialization layers applied —
  * unwrap string layers until we hit a non-string.
  */
-export function parseSyncResult(result: { loans?: unknown; expenses?: unknown; assets?: unknown; incomeExpenseHistory?: unknown } | null | undefined): PlaidImport {
+export function parseSyncResult(result: { loans?: unknown; expenses?: unknown; assets?: unknown; payments?: unknown; paymentCandidates?: unknown; attentionItemIds?: unknown; incomeExpenseHistory?: unknown } | null | undefined): PlaidImport {
     const parse = <T,>(value: unknown): T[] => {
         let v = value;
         for (let depth = 0; depth < 3 && typeof v === 'string'; depth++) {
@@ -135,6 +143,39 @@ export function parseSyncResult(result: { loans?: unknown; expenses?: unknown; a
         loans: parse<Loan>(result?.loans),
         expenses: parse<Expense>(result?.expenses),
         assets: parse<Asset>(result?.assets),
+        payments: parse<Payment>(result?.payments),
+        paymentCandidates: parse<PaymentCandidate>(result?.paymentCandidates),
+        attentionItemIds: Array.isArray(result?.attentionItemIds) ? (result?.attentionItemIds as string[]) : [],
         incomeExpenseHistory: parse<MonthlyFinanceSnapshot>(result?.incomeExpenseHistory),
+    };
+}
+
+
+/**
+ * One call for a bank sync result: refreshes loans/expenses/assets, then adds
+ * detected debt payments. Detected payments never alter balances (the sync
+ * above already did).
+ */
+export function applySyncResult(current: Finances, imported: PlaidImport): Finances {
+    return mergeDetectedPayments(mergePlaidData(current, imported), imported.payments);
+}
+
+/**
+ * "Disconnect and delete imported data": removes everything that came from a
+ * bank. Debts imported from the bank are deleted outright; user history
+ * (logged/detected payments, balance history) stays in Modulos.
+ */
+export function deleteImportedData(current: Finances, itemId: string): Finances {
+    const droppedLoanIds = new Set(current.loans.filter(l => l.plaidItemId === itemId).map(l => l.id));
+    return {
+        ...current,
+        loans: current.loans.filter(l => l.plaidItemId !== itemId),
+        expenses: current.expenses.filter(e => e.plaidItemId !== itemId),
+        assets: (current.assets ?? []).filter(a => a.plaidItemId !== itemId),
+        // Keep the history of payments but detach nothing: payments for removed
+        // debts remain visible by payee name in Progress.
+        payments: (current.payments ?? []).map(p =>
+            droppedLoanIds.has(p.loanId) ? { ...p, payee: p.payee ?? 'Removed debt' } : p
+        ),
     };
 }

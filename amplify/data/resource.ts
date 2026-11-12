@@ -26,16 +26,28 @@ const schema = a.schema({
       expenses: a.json(),
       loans: a.json(),
       assets: a.json(),
+      // Logged + bank-detected debt payments (Progress tab).
+      payments: a.json(),
       // Rolling 12-month [{month, income, expenses}] snapshots (from the
       // Plaid transaction aggregation). Must exist here or every Finances
       // create/update containing it is rejected by AppSync.
       incomeExpenseHistory: a.json(),
+      // Rolling [{month, balance}] of total active debt, recorded as the app is used.
+      balanceHistory: a.json(),
     })
     .authorization((allow) => [allow.owner()]),
 
   Settings: a
     .model({
       riskProfile: a.string(),
+      strategy: a.string(),
+      extraPayment: a.float(),
+      customOrder: a.json(),
+      targetDate: a.string(),
+      onboardingDone: a.boolean(),
+      bankNudgeDismissed: a.boolean(),
+      payeeRules: a.json(),
+      ignoredCandidates: a.json(),
     })
     .authorization((allow) => [allow.owner()]),
 
@@ -76,9 +88,14 @@ const schema = a.schema({
     loans: a.json().required(),
     expenses: a.json().required(),
     assets: a.json(),
+    // Debt payments detected from transactions + ones we could not match.
+    payments: a.json(),
+    paymentCandidates: a.json(),
     // Rolling 12-month [{ month, income, expenses }] aggregated from transactions.
     incomeExpenseHistory: a.json(),
     syncedItemIds: a.string().array(),
+    // Items whose bank login expired and need "Reconnect".
+    attentionItemIds: a.string().array(),
     lastSyncedAt: a.datetime(),
   }),
   PlaidDisconnectResult: a.customType({
@@ -92,6 +109,8 @@ const schema = a.schema({
       // Origin-based OAuth return URL (validated against an allowlist in
       // the handler); required for banks that use OAuth-based login.
       redirectUri: a.string(),
+      // Present = Link "update mode" to reconnect an expired item.
+      itemId: a.string(),
     })
     .returns(a.ref('PlaidLinkTokenResult'))
     .authorization((allow) => [allow.authenticated()])
