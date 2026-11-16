@@ -389,7 +389,14 @@ async function disconnectItem(sub: string, args: PlaidArgs) {
   const token = tokens.find((t) => t.itemId === args.itemId);
   if (!token) throw new Error('Unknown itemId for this user');
 
-  await plaid.itemRemove({ access_token: token.accessToken });
+  try {
+    await plaid.itemRemove({ access_token: token.accessToken });
+  } catch (err: unknown) {
+    // A link made in another Plaid environment (e.g. an old sandbox test link) can no longer
+    // be removed from Plaid; still let the user clear it locally.
+    const code = (err as { response?: { data?: { error_code?: string } } })?.response?.data?.error_code;
+    if (!['INVALID_ACCESS_TOKEN', 'ITEM_NOT_FOUND', 'INVALID_API_KEYS'].includes(code ?? '')) throw err;
+  }
   await ddb.send(
     new DeleteCommand({ TableName: TOKEN_TABLE, Key: { itemId: token.itemId } })
   );
