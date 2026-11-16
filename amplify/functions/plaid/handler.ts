@@ -445,7 +445,10 @@ const rethrowPlaidError = (err: unknown): never => {
   const data = (err as { response?: { data?: { error_code?: string; error_message?: string } } })
     ?.response?.data;
   if (data?.error_code) {
-    throw new Error(`Plaid ${data.error_code}: ${data.error_message ?? 'no details'}`);
+    const hint = data.error_code === 'INVALID_API_KEYS'
+      ? ` [server uses ${PLAID_ENV_NAME || 'sandbox'} (${plaidBasePath}), client_id ends "${PLAID_CLIENT_ID.slice(-4)}" (${PLAID_CLIENT_ID.length} chars), secret ${PLAID_SECRET.length} chars]`
+      : '';
+    throw new Error(`Plaid ${data.error_code}: ${data.error_message ?? 'no details'}${hint}`);
   }
   throw err;
 };
