@@ -38,13 +38,34 @@ const dataClient = generateClient<Schema>();
 const TOKEN_TABLE = process.env.PLAID_TOKEN_TABLE!;
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
+// Pasted secrets often carry a trailing space or newline, which Plaid reports as INVALID_API_KEYS.
+const PLAID_ENV_NAME = String(env.PLAID_ENV ?? '').trim().toLowerCase();
+const PLAID_CLIENT_ID = String(env.PLAID_CLIENT_ID ?? '').trim();
+const PLAID_SECRET = String(env.PLAID_SECRET ?? '').trim();
+const plaidBasePath = PlaidEnvironments[PLAID_ENV_NAME] ?? PlaidEnvironments.sandbox;
+
+// Safe diagnostics for CloudWatch: which Plaid environment this function talks to and a
+// fingerprint of the keys (never the secret itself).
+console.log(
+  'plaid-api config:',
+  JSON.stringify({
+    plaidEnv: PLAID_ENV_NAME || '(empty, defaulting to sandbox)',
+    basePath: plaidBasePath,
+    clientIdLast4: PLAID_CLIENT_ID.slice(-4),
+    clientIdLength: PLAID_CLIENT_ID.length,
+    secretLength: PLAID_SECRET.length,
+    secretHadWhitespace: String(env.PLAID_SECRET ?? '') !== PLAID_SECRET,
+    clientIdHadWhitespace: String(env.PLAID_CLIENT_ID ?? '') !== PLAID_CLIENT_ID,
+  })
+);
+
 const plaid = new PlaidApi(
   new Configuration({
-    basePath: PlaidEnvironments[env.PLAID_ENV] ?? PlaidEnvironments.sandbox,
+    basePath: plaidBasePath,
     baseOptions: {
       headers: {
-        'PLAID-CLIENT-ID': env.PLAID_CLIENT_ID,
-        'PLAID-SECRET': env.PLAID_SECRET,
+        'PLAID-CLIENT-ID': PLAID_CLIENT_ID,
+        'PLAID-SECRET': PLAID_SECRET,
       },
     },
   })
